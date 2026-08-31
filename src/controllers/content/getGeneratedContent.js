@@ -9,11 +9,11 @@ const getGeneratedContent = async (req, res) => {
     }
 
     // 2. FETCH JOBS
-    // We only want 'completed' jobs because 'processing' ones have no content yet.
+    // Return all jobs regardless of status so the frontend can show
+    // processing/failed states too (not just completed content).
     // .sort({ createdAt: -1 }) puts the newest content at the top.
     const history = await Job.find({ 
-      userId: req.user.id, 
-      status: 'completed' 
+      userId: req.user.id
     })
     .sort({ createdAt: -1 });
 
@@ -21,7 +21,7 @@ const getGeneratedContent = async (req, res) => {
     res.status(200).json({
       success: true,
       count: history.length,
-      data: history
+      jobs: history
     });
 
   } catch (error) {

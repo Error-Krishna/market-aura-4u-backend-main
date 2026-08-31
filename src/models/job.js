@@ -20,7 +20,16 @@ const jobSchema = new mongoose.Schema({
   },
   error: String
 }, {
-  timestamps: true // Adds createdAt, updatedAt automatically
+  timestamps: true, // Adds createdAt, updatedAt automatically
+  toJSON: {
+    virtuals: true,
+    transform: (_doc, ret) => {
+      ret.id = ret._id.toString();
+      delete ret._id;
+      delete ret.__v;
+      return ret;
+    },
+  },
 });
 
 module.exports = mongoose.model('Job', jobSchema);
