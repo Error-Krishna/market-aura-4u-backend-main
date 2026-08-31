@@ -1,0 +1,1687 @@
+
+
+============================================================
+FILE: src/app.js
+============================================================
+
+const express = require('express');
+const app = express();
+const cookieParser = require("cookie-parser");
+const dotenv = require('dotenv').config();
+const port = process.env.PORT || 3000; // Added fallback port just in case
+const connectDB = require('./config/db');
+const User = require('./models/user');
+const apiRouter = require("./routes");
+const { instagramLogin, instagramCallback, publishImageToInstagram } = require("../src/controllers/auth/authController");
+const cors = require('cors');
+
+// ✅ CORS FIX: Allow dynamic origins (Friends, Postman, Localhost)
+// app.use(cors({
+//   origin: function (origin, callback) {
+//     // Allow requests with no origin (like mobile apps, curl, or Postman)
+//     if (!origin) return callback(null, true);
+    
+//     // Allow any origin (This lets your friend connect from their localhost)
+//     return callback(null, true);
+//   },
+//   methods: ["GET", "POST", "PUT", "DELETE"],
+//   credentials: true // Crucial for cookies
+// }));
+
+app.use(cors({
+  origin: true, // <--- This allows your friend, localhost, and Postman dynamically
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  credentials: true // This requires specific origin, 'true' handles it auto-magically
+}));
+
+app.use(express.json());
+app.use(cookieParser());
+
+// Mount your main API routes
+app.use('/api', apiRouter);
+
+// ✅ Publishing Route
+app.post('/api/v1/publish/instagram', async (req, res) => {
+  try {
+    const { userId, imageUrl, caption } = req.body;
+     console.log(req.body);
+    // A. Find User in DB
+    const user = await User.findById(userId);
+    
+    // B. Check connection
+    if (!user || !user.socialAccounts?.instagram?.isConnected) {
+      return res.status(400).json({ error: "User has not connected Instagram yet." });
+    }
+
+    const { instagramId, accessToken } = user.socialAccounts.instagram;
+
+    // C. Publish using stored keys
+    const result = await publishImageToInstagram(instagramId, accessToken, imageUrl, caption);
+    
+    res.json({ success: true, postId: result.id });
+
+  } catch (error) {
+    console.error(error); // Log error to terminal so you can see it
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.listen(port, async () => {
+  await connectDB();
+  console.log(`Server is running at https://localhost:${port}`);
+});
+
+============================================================
+FILE: src/config/db.js
+============================================================
+
+const mongoose = require('mongoose');
+const dotenv = require('dotenv').config();
+
+const connectDB = async () => {
+    try {
+        await mongoose.connect(process.env.MONGO_URI, {
+
+            
+        });
+        console.log('MongoDB connected successfully');
+    } catch (error) {
+        console.error('MongoDB connection failed:', error.message);
+       
+    }
+};
+
+module.exports = connectDB;
+
+============================================================
+FILE: src/controllers/auth/authController.js
+============================================================
+
+const axios = require('axios');
+const User = require('../../models/user'); 
+
+// Helper to wait (sleep)
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// ---------------- 1. LOGIN (Start) ----------------
+const instagramLogin = (req, res) => {
+  // ✅ FIX: Get ID from URL query (since auth middleware is removed for this route)
+  // Example URL: /api/v1/auth/instagram/login?userId=65a9...
+  const userId = req.query.userId || req.user?.id;
+ 
+  console.log(`🚀 Starting Login for User ID: ${userId}`);
+
+  // Safety Check: If we don't know who the user is, stop here.
+  if (!userId) {
+    return res.status(400).send("Error: Missing 'userId' in URL. Please login again.");
+  }
+
+  const params = new URLSearchParams({
+    client_id: process.env.INSTAGRAM_APP_ID,
+    redirect_uri: process.env.INSTAGRAM_REDIRECT_URI,
+    scope: 'instagram_business_basic,instagram_business_content_publish', 
+    response_type: 'code',
+    state: userId // We send the DB ID as 'state' to retrieve it later
+  });
+
+  res.redirect(`https://api.instagram.com/oauth/authorize?${params}`);
+};
+
+// ---------------- 2. CALLBACK (Finish) ----------------
+const instagramCallback = async (req, res) => {
+  const { code, state } = req.query; 
+
+  // Validation
+  if (!code) return res.status(400).send("No code provided");
+  console.log("instagram callback state (User ID) is: " + state);
+  if (!state) return res.status(400).send("No state provided");
+  
+  try {
+    // 1. Get Short Token
+    const shortTokenRes = await axios.post(
+      "https://api.instagram.com/oauth/access_token",
+      new URLSearchParams({
+        client_id: process.env.INSTAGRAM_APP_ID,
+        client_secret: process.env.INSTAGRAM_APP_SECRET,
+        grant_type: "authorization_code",
+        redirect_uri: process.env.INSTAGRAM_REDIRECT_URI, 
+        code
+      })
+    );
+
+    const { access_token: shortToken, user_id: instaUserId } = shortTokenRes.data;
+       
+    // 2. Get Long Token
+    const longTokenRes = await axios.get("https://graph.instagram.com/access_token", {
+      params: {
+        grant_type: 'ig_exchange_token',
+        client_secret: process.env.INSTAGRAM_APP_SECRET,
+        access_token: shortToken
+      }
+    });
+
+    const longLivedToken = longTokenRes.data.access_token;
+
+    // ✅ FIX START: Declare variable outside the block
+    let updatedUser = null; 
+
+    if (state) {
+      // ✅ Assign to the outer variable
+      updatedUser = await User.findByIdAndUpdate(state, {
+        'socialAccounts.instagram.instagramId': instaUserId,
+        'socialAccounts.instagram.accessToken': longLivedToken,
+        'socialAccounts.instagram.isConnected': true,
+        'socialAccounts.instagram.connectedAt': new Date()
+      }, { new: true });
+      
+      console.log(`✅ Success! Database updated for User: ${updatedUser?.email || state}`);
+    } else {
+      console.log("⚠️ Warning: Tokens received but NOT saved.");
+    }
+
+    // ✅ Redirect the user back to your Frontend (Localhost)
+    // This looks much better than just showing JSON in the browser.
+    res.redirect(`http://localhost:5173/onboarding?instagramSuccess=true`);
+    
+    // OR if you prefer JSON (keep your old line):
+    
+
+  } catch (e) {
+    console.error("Callback Error:", e.response?.data || e.message);
+    res.status(500).json(e.response?.data || { error: "Login failed" });
+  }
+};
+
+// ---------------- 3. PUBLISH HELPER (Logic Only) ----------------
+const publishImageToInstagram = async (instaId, accessToken, imageUrl, caption) => {
+  
+  try {
+    // Step 1: Create Container
+    console.log("Step 1: Creating Media Container...");
+    const containerRes = await axios.post(
+      `https://graph.instagram.com/v24.0/${instaId}/media`,
+      { image_url: imageUrl, caption, access_token: accessToken }
+    );
+    const containerId = containerRes.data.id;
+
+    // Step 2: Poll for Status
+    let isReady = false;
+    let attempts = 0;
+    while (!isReady && attempts < 10) {
+      await wait(5000); // Wait 5s
+      attempts++;
+      
+      const statusRes = await axios.get(
+        `https://graph.instagram.com/v24.0/${containerId}?fields=status_code&access_token=${accessToken}`
+      );
+      const status = statusRes.data.status_code;
+      console.log(`Processing Status: ${status}`);
+
+      if (status === 'FINISHED') isReady = true;
+      else if (status === 'ERROR') throw new Error("Media processing failed");
+    }
+
+    if (!isReady) throw new Error("Timeout: Media took too long");
+
+    // Step 3: Publish
+    console.log("Step 3: Publishing...");
+    const publishRes = await axios.post(
+      `https://graph.instagram.com/v24.0/${instaId}/media_publish`,
+      { creation_id: containerId, access_token: accessToken }
+    );
+
+    return publishRes.data; // { id: "..." }
+
+  } catch (error) {
+    console.error("Publishing Helper Error:", error.response?.data || error.message);
+    throw error; // Throw up to the route handler
+  }
+};
+
+module.exports = {
+  instagramLogin,
+  instagramCallback,
+  publishImageToInstagram
+};
+
+============================================================
+FILE: src/controllers/auth/login.js
+============================================================
+
+const User = require("../../models/user"); 
+const bcrypt=require("bcrypt");
+const jwt=require("jsonwebtoken");
+async function login(req, res) {
+  console.log("login comin g");
+  const { email, password } = req.body;
+  
+  try {
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Email and password are required' });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid credentials' });
+    }
+
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+      return res.status(400).json({ message: 'Invalid credentials' });
+    }
+
+    // Generate Token
+    const token = jwt.sign(
+      { id: user._id, email: user.email }, 
+      process.env.JWT_SECREAT_KEY,
+      { expiresIn: '24h' }
+    );
+
+    // Set Cookie (for backend-to-backend/security)
+    res.cookie("token", token, {
+      // httpOnly: true,
+      // secure: process.env.NODE_ENV === 'production', 
+      // sameSite: 'strict',
+      maxAge: 24 * 60 * 60 * 1000
+    });
+
+     console.log(token);
+    // Send JSON (for Frontend localStorage)
+    res.status(200).json({
+      message: "User logged in successfully",
+      status: 200,
+      token: token, // <--- IMPORTANT: Frontend interceptor needs this
+      data: {
+        id: user._id,
+        email: user.email,
+        isOnboarded:user.onboardingCompleted
+        // add other non-sensitive fields if needed
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+}
+module.exports=login;
+
+============================================================
+FILE: src/controllers/auth/logout.js
+============================================================
+
+function logout(req, res) {
+  // Assuming you are using JWT stored in cookies for authentication
+  res.clearCookie('token'); // Clear the token cookie
+  return res.status(200).json({ message: 'user Logged out successfully' });
+}
+
+module.exports = logout;
+
+
+============================================================
+FILE: src/controllers/auth/onBoard.js
+============================================================
+
+const User = require("../../models/user"); // Check if your file is 'User.js' or 'user.js'
+
+const completeOnboarding = async (req, res) => {
+  // 1. GET DATA FROM FRONTEND
+  // Make sure your frontend form sends these exact names
+  const { 
+    companyName, 
+    industry, 
+    brandTone, 
+    uvp,            
+    targetAudience,  
+    platforms 
+  } = req.body;
+  
+  const userId = req.user.id;
+
+  try {
+    // 2. PREPARE THE UPDATE OBJECT
+    // We must nest the data inside "brandProfile" to match your Schema
+    const updates = {
+      
+      // This stays at the Root Level
+      onboardingCompleted: true,
+
+      // Everything else goes inside the nested object
+      brandProfile: {
+        companyName: companyName || '',
+        industry: industry || '',
+        
+        // The "Brain" of your AI
+        uvp: uvp || '', 
+        targetAudience: targetAudience || '', 
+        
+        brandVoice: {
+          tone: brandTone || 'Professional',
+          description: '' // You can add a text input for this later
+        },
+        
+        // Ensure this is an array like ["twitter", "linkedin"]
+        platforms: platforms || [] 
+      }
+    };
+
+    // 3. UPDATE DATABASE
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { $set: updates }, // Use $set to be safe with nested updates
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!updatedUser) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // 4. SUCCESS RESPONSE
+    res.status(200).json({
+      success: true,
+      message: 'Onboarding completed successfully',
+      user: updatedUser
+    });
+
+  } catch (error) {
+    console.error("Onboarding Error:", error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server Error during onboarding', 
+      error: error.message 
+    });
+  }
+};
+
+module.exports = completeOnboarding;
+
+============================================================
+FILE: src/controllers/auth/profile.js
+============================================================
+
+const User = require('../../models/user'); 
+
+const getUserProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    // Fetch user
+    const user = await User.findById(userId).select('-password');
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // --- LOGIC EXTRACTION ---
+    // 1. Get Brand Profile (Handle if empty)
+    const brand = user.brandProfile || {};
+    
+    // 2. Get Credits (Fallback to defaults if missing)
+    const userCredits = user.credits || { monthly: 100, used: 0 };
+    
+    // 3. Calculate Logic
+    const remainingCredits = userCredits.monthly - userCredits.used;
+    // Premium logic: Explicit flag OR dynamic check (e.g., if they have > 100 credits)
+    const isPremium = user.isPremium || userCredits.monthly > 100; 
+
+    res.status(200).json({
+      success: true,
+      data: {
+        // --- Logic Fields ---
+        id: user._id,
+        isOnboarded: user.onboardingCompleted,
+        isUserPremium: isPremium,
+        joinedAt: user.createdAt,
+
+        // --- Auth Fields ---
+        name: user.name,
+        email: user.email,
+
+        // --- Usage Stats ---
+        credits: {
+          total: userCredits.monthly,
+          used: userCredits.used,
+          remaining: remainingCredits
+        },
+
+        // --- Brand Profile Data (Flattened for Frontend) ---
+        companyName: brand.companyName || "",
+        industry: brand.industry || "",
+        targetAudience: brand.targetAudience || "",
+        marketingGoal: brand.marketingGoal || "",
+        brandVoice: brand.brandVoice || { tone: 'Professional', description: '' },
+        platforms: brand.platforms || []
+      }
+    });
+
+  } catch (error) {
+    console.error('Get Profile Error:', error.message);
+    res.status(500).json({ success: false, message: 'Server Error', error: error.message });
+  }
+};
+
+module.exports = getUserProfile ;
+
+============================================================
+FILE: src/controllers/auth/signUp.js
+============================================================
+
+const User = require("../../models/user"); 
+const jwt = require('jsonwebtoken'); // 1. Import JWT
+const bcrypt=require("bcrypt");
+const signup = async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Email and Password are required' });
+  }
+
+  try {
+    let user = await User.findOne({ email });
+    if (user) {
+      return res.status(400).json({ message: 'User already exists' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    user = new User({
+      email,
+      password: hashedPassword
+    });
+
+    await user.save();
+
+    // 5️⃣ Generate JWT token
+    const token = jwt.sign(
+      { userId: user._id, email: user.email },
+      process.env.JWT_SECREAT_KEY,
+      { expiresIn: '24h' }
+    );
+
+    // 6️⃣ Send cookie (Optional but good for security)
+    res.cookie('token', token, {
+      httpOnly: true, // Prevents XSS attacks
+      secure: process.env.NODE_ENV === 'production', 
+      sameSite: 'strict',
+      maxAge: 24 * 60 * 60 * 1000 // 1 day
+    });
+
+    // 7️⃣ Respond success (Include token for localStorage)
+    res.status(201).json({ 
+      message: 'User created successfully',
+      status: 200,
+      token, // Frontend needs this for localStorage
+      data: { id: user._id, email: user.email }
+    });
+
+  } catch (error) {
+    console.error(error.message);
+    res.status(500).json({ message: 'Server Error' });
+  }
+};
+
+module.exports = signup;
+
+============================================================
+FILE: src/controllers/connectAccount/twitter.js
+============================================================
+
+const { TwitterApi } = require('twitter-api-v2');
+const User = require('../../models/user.js');
+
+// 1. INITIALIZE CLIENT (Global Config for OAuth)
+const twitterClient = new TwitterApi({
+  clientId: process.env.TWITTER_CLIENT_ID,
+  clientSecret: process.env.TWITTER_CLIENT_SECRET,
+});
+
+// A temporary map to store 'state' (security check) vs 'userId'
+// In production, use Redis or a DB table for this.
+const stateCache = new Map(); 
+
+// --- ROUTE A: START LOGIN (GET /api/auth/twitter/login) ---
+const initTwitterLogin = async (req, res) => {
+  const userId = req.user.id; // User must be logged in to Aura first
+
+  // Generate the Auth Link
+  const { url, codeVerifier, state } = twitterClient.generateOAuth2AuthLink(
+    'http://localhost:5000/api/v1/auth/twitter/callback', // Your Callback URL
+    { scope: ['tweet.read', 'tweet.write', 'users.read', 'offline.access'] }
+  );
+
+  // Store the verifier & user ID temporarily
+  stateCache.set(state, { codeVerifier, userId });
+
+  // Send the URL to frontend so it can redirect the user
+  res.json({ url });
+};
+
+// --- ROUTE B: CALLBACK (GET /api/auth/twitter/callback) ---
+const twitterCallback = async (req, res) => {
+  const { state, code } = req.query;
+
+  const storedData = stateCache.get(state);
+  if (!storedData) {
+    return res.status(400).send('Invalid state or session expired.');
+  }
+
+  const { codeVerifier, userId } = storedData;
+
+  try {
+    // Exchange Code for Tokens
+    const { accessToken, refreshToken, expiresIn } = await twitterClient.loginWithOAuth2({
+      code,
+      codeVerifier,
+      redirectUri: 'http://localhost:5000/api/v1/auth/twitter/callback',
+    });
+
+    // Calculate Expiry (usually 2 hours from now)
+    const expiresAt = new Date(Date.now() + expiresIn * 1000);
+
+    // SAVE TO DB
+    await User.findByIdAndUpdate(userId, {
+      $push: { 
+        connectedAccounts: {
+          platformName: 'twitter',
+          twitterAccessToken: accessToken,
+          twitterRefreshToken: refreshToken, // CRITICAL: Used to get new access tokens later
+          twitterExpiresAt: expiresAt
+        }
+      }
+    });
+
+    // Cleanup Cache
+    stateCache.delete(state);
+
+    // Redirect user back to Frontend Dashboard
+    res.redirect('http://localhost:3000/dashboard?twitter=success');
+
+  } catch (error) {
+    console.error('Twitter Auth Failed:', error);
+    res.status(500).send('Twitter connection failed.');
+  }
+};
+
+module.exports = { initTwitterLogin, twitterCallback };
+
+============================================================
+FILE: src/controllers/content/generateContent.js
+============================================================
+
+const User = require('../../models/user.js');
+const Job = require('../../models/job');
+
+const generateContent = async (req, res) => {
+  let jobId = null;
+
+  try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const userId = req.user.id;
+    const { prompt } = req.body;
+
+    if (!prompt || prompt.trim().length < 5) {
+      return res.status(400).json({ success: false, message: 'Topic is too short.' });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const platformsToGenerate = user.brandProfile?.platforms?.length > 0 
+      ? user.brandProfile.platforms 
+      : ['instagram', 'twitter'];
+
+    const job = new Job({
+      userId: userId,
+      platforms: platformsToGenerate,
+      originalContent: prompt,
+      status: 'processing'
+    });
+    await job.save();
+    jobId = job._id;
+
+    console.log(`Job ${jobId} started for: ${platformsToGenerate.join(', ')}`);
+
+    const generatedContent = await callAIAndGenerateContent(prompt, user, platformsToGenerate);
+    console.log("Generated Content with Image:", generatedContent);
+
+    const finishedJob = await Job.findByIdAndUpdate(jobId, {
+      status: 'completed',
+      generatedContent: generatedContent,
+      completedAt: new Date()
+    }, { new: true });
+
+    res.status(200).json({
+      success: true,
+      message: 'Content generated successfully!',
+      job: finishedJob
+    });
+
+  } catch (error) {
+    console.error(`Job ${jobId} failed:`, error.message);
+    if (jobId) {
+      await Job.findByIdAndUpdate(jobId, { status: 'failed', error: error.message });
+    }
+    res.status(500).json({ success: false, message: 'Generation failed', error: error.message });
+  }
+};
+
+const callAIAndGenerateContent = async (userPrompt, user, platforms) => {
+  const { brandProfile } = user;
+
+  const systemPrompt = `
+    You are an expert Social Media Copywriter for "${brandProfile.companyName || 'our brand'}".
+    
+    --- 1. BRAND INTELLIGENCE ---
+    INDUSTRY: ${brandProfile.industry || 'General Business'}
+    TARGET AUDIENCE: ${brandProfile.targetAudience?.description || 'General Audience'}
+       - Their Pain Point: "${brandProfile.targetAudience?.painPoint || ''}"
+       - Their Desire: "${brandProfile.targetAudience?.desire || ''}"
+    UNIQUE VALUE PROPOSITION (UVP): "${brandProfile.uvp || ''}"
+    BRAND VOICE: ${brandProfile.brandVoice?.tone || 'Professional'} 
+    EXTRA VOICE RULES: ${brandProfile.brandVoice?.description || 'Be human and engaging.'}
+
+    --- 2. THE USER REQUEST ---
+    Topic: "${userPrompt}"
+
+    --- 3. OUTPUT INSTRUCTIONS (STRICT JSON) ---
+    You must return a valid JSON object containing keys only for these platforms: ${platforms.join(', ')}.
+    Follow these specific rules for each platform:
+
+    ${platforms.includes('twitter') ? `
+    "twitter": [
+      { 
+        "text": "Write a punchy tweet (max 280 chars). Use slang if appropriate. Include ONLY 2-3 specific hashtags. Do NOT use generic tags.",
+        "image_url": "PLACEHOLDER_IMAGE"
+      }
+    ],` : ''}
+
+    ${platforms.includes('linkedin') ? `
+    "linkedin": [
+      "Write a professional post with short paragraphs and line breaks."
+    ],` : ''}
+
+    ${platforms.includes('instagram') ? `
+    "instagram": {
+      "caption": "Write an engaging caption with a hook and emojis.",
+      "image_url": "PLACEHOLDER_IMAGE"
+    },` : ''}
+
+    ${platforms.includes('email') ? `
+    "email": {
+      "subject": "Catchy subject line",
+      "body": "Full email body focusing on pain points and solutions."
+    },` : ''}
+
+    Return ONLY raw JSON. No markdown.
+  `;
+
+  const groqUrl = "https://api.groq.com/openai/v1/chat/completions";
+  
+  const response = await fetch(groqUrl, {
+    method: 'POST',
+    headers: { 
+      'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+      'Content-Type': 'application/json' 
+    },
+    body: JSON.stringify({
+      model: "llama-3.1-8b-instant",
+      messages: [
+        { role: "system", content: systemPrompt},
+        { role: "user", content: userPrompt }
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.7
+    })
+  });
+ 
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Groq API Error: ${response.status} - ${errText}`);
+  }
+
+  const data = await response.json();
+  
+  if (!data.choices || !data.choices[0].message.content) {
+    throw new Error("Groq returned empty response");
+  }
+
+  const rawText = data.choices[0].message.content;
+  let generatedContent = JSON.parse(rawText);
+
+  // --- CHANGED TO LOREMFLICKR FOR RELIABILITY ---
+  const needsImage = platforms.some(p => ['twitter', 'instagram', 'facebook'].includes(p));
+  
+  if (needsImage) {
+    // 1. Get first word of prompt for keyword (e.g. "Coffee")
+    const keyword = encodeURIComponent(userPrompt.split(' ')[0]);
+    // 2. Generate random number for cache busting
+    const randomSeed = Math.floor(Math.random() * 10000);
+    // 3. Create URL
+    const imageUrl = `https://loremflickr.com/1080/1080/${keyword}?random=${randomSeed}`;
+    
+    console.log("Generated Image URL:", imageUrl);
+    
+    generatedContent.imageUrl = imageUrl;
+
+    if (generatedContent.twitter && Array.isArray(generatedContent.twitter) && generatedContent.twitter[0]) {
+      generatedContent.twitter[0].image_url = imageUrl;
+    }
+    if (generatedContent.instagram) {
+      generatedContent.instagram.image_url = imageUrl;
+    }
+  }
+  
+  return generatedContent;
+};
+
+module.exports = { generateContent };
+
+============================================================
+FILE: src/controllers/content/getGeneratedContent.js
+============================================================
+
+// controllers/contentController.js
+const Job = require('../../models/job');
+
+const getGeneratedContent = async (req, res) => {
+  try {
+    // 1. CHECK USER
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    // 2. FETCH JOBS
+    // We only want 'completed' jobs because 'processing' ones have no content yet.
+    // .sort({ createdAt: -1 }) puts the newest content at the top.
+    const history = await Job.find({ 
+      userId: req.user.id, 
+      status: 'completed' 
+    })
+    .sort({ createdAt: -1 });
+
+    // 3. RETURN DATA
+    res.status(200).json({
+      success: true,
+      count: history.length,
+      data: history
+    });
+
+  } catch (error) {
+    console.error('Error fetching history:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server Error fetching content history' 
+    });
+  }
+};
+
+module.exports = {
+  getGeneratedContent
+};
+
+============================================================
+FILE: src/controllers/content/publishContent.js
+============================================================
+
+// const Job = require('../../models/job');
+// const { TwitterApi } = require('twitter-api-v2');
+// const path = require('path'); 
+// const axios = require('axios'); // <-- 1. ADD THIS
+
+// // ===============================================================
+// // 🚀 TWITTER PUBLISHING (WITH IMAGE URL DOWNLOAD)
+// // ===============================================================
+
+// const publishToTwitter = async (twitterContent) => {
+//   console.log('--- 🚀 PUBLISHING TO TWITTER ---');
+  
+//   const post = twitterContent[0]; 
+//   const tweetText = post.text;
+  
+//   // --- 2. THIS IS THE FIX ---
+//   // Look for 'image_url' from your database object
+//   const imageUrl = post.image_url; 
+  
+//   console.log('Received post object:', post); // Keep this log for debugging
+
+//   if (imageUrl) {
+//     console.log('🖼️ Image URL found:', imageUrl);
+//   } else {
+//     console.log('No image_url provided in post object.');
+//   }
+//   // --- END OF FIX ---
+
+//   if (!tweetText) {
+//     throw new Error('No tweet text found.');
+//   }
+
+//   if (!process.env.TWITTER_API_KEY ||
+//       !process.env.TWITTER_API_SECRET ||
+//       !process.env.TWITTER_ACCESS_TOKEN ||
+//       !process.env.TWITTER_ACCESS_SECRET) {
+        
+//     console.error('❌ Missing Twitter OAuth 1.0a credentials in .env file.');
+//     throw new Error('Twitter API credentials are not configured on the server. Check .env file.');
+//   }
+
+//   console.log('📝 Tweet:', tweetText);
+
+//   try {
+//     const twitterClient = new TwitterApi({
+//       appKey: process.env.TWITTER_API_KEY,
+//       appSecret: process.env.TWITTER_API_SECRET,
+//       accessToken: process.env.TWITTER_ACCESS_TOKEN,
+//       accessSecret: process.env.TWITTER_ACCESS_SECRET,
+//     });
+
+//     const rwClient = twitterClient.readWrite;
+//     let mediaId = null;
+
+//     // --- 3. THIS IS THE NEW UPLOAD LOGIC ---
+//     if (imageUrl) {
+//       try {
+//         console.log('...downloading image from URL...');
+        
+//         // Download the image as a buffer
+//         const response = await axios.get(imageUrl, { 
+//           responseType: 'arraybuffer' 
+//         });
+//         const imageBuffer = Buffer.from(response.data, 'binary');
+        
+//         // Get the MIME type (e.g., 'image/png') from the response
+//         const mimeType = response.headers['content-type'];
+        
+//         if (!mimeType) {
+//           throw new Error('Could not determine image MIME type.');
+//         }
+
+//         console.log(`...download complete. MIME Type: ${mimeType}`);
+//         console.log('...uploading media to Twitter...');
+
+//         // Upload the buffer
+//         mediaId = await twitterClient.v1.uploadMedia(imageBuffer, { 
+//           mimeType: mimeType 
+//         });
+        
+//         console.log(`...media uploaded, ID: ${mediaId}`);
+
+//       } catch (uploadError) {
+//         console.error('❌ Twitter media download/upload failed:', uploadError.message);
+//         throw new Error(`Failed to upload media: ${uploadError.message}`);
+//       }
+//     }
+
+//     // --- STEP 2: POST TWEET (with or without media) ---
+//     console.log('🐦 Posting tweet...');
+
+//     const tweetPayload = { text: tweetText };
+//     if (mediaId) {
+//       tweetPayload.media = { media_ids: [mediaId] };
+//     }
+
+//     const { data } = await rwClient.v2.tweet(tweetPayload);
+    
+//     console.log('✅ Tweet posted successfully!');
+//     console.log(`🔗 URL: https://x.com/i/status/${data.id}`);
+    
+//     return { 
+//       success: true, 
+//       url: `https://x.com/i/status/${data.id}`,
+//       tweetId: data.id,
+//       real: true
+//     };
+
+//   } catch (error) {
+//     console.error('❌ Twitter API publishing failed.');
+//     let simpleErrorMessage = 'Failed to post tweet.';
+
+//     if (error.data && error.data.detail) {
+//       console.error('API Error Details:', error.data.detail);
+//       simpleErrorMessage = `Twitter API Error: ${error.data.detail}`;
+//     } else {
+//       console.error('Error:', error.message);
+//       simpleErrorMessage = error.message;
+//     }
+    
+//     throw new Error(simpleErrorMessage);
+//   }
+// };
+
+// // ===============================================================
+// // 📧 OTHER PLATFORMS (SIMULATED)
+// // ===============================================================
+
+// const publishToEmail = async (emailContent) => {
+//   console.log('📧 Email ready');
+//   return { 
+//     success: true, 
+//     message: 'Email content ready',
+//     simulated: true
+//   };
+// };
+
+// const publishToLinkedIn = async (linkedinContent) => {
+//   console.log('💼 LinkedIn ready');
+//   return { 
+//     success: true, 
+//     message: 'LinkedIn post ready',
+//     simulated: true
+//   };
+// };
+
+// const publishToBlog = async (blogContent) => {
+//   console.log('📝 Blog ready');
+//   return { 
+//     success: true, 
+//     message: 'Blog post ready',
+//     simulated: true
+//   };
+// };
+
+// const publishToInstagram = async (instagramContent) => {
+//   console.log('📸 Instagram ready');
+//   return { 
+//     success: true, 
+//     message: 'Instagram post ready',
+//     simulated: true
+//   };
+// };
+
+// // ===============================================================
+// // 🛎️ MAIN PUBLISHING CONTROLLER
+// // ===============================================================
+
+// const publishContent = async (req, res) => {
+//   try {
+//     const { jobId, platforms } = req.body;
+//     const userId = req.user.id;
+
+//     console.log(`📦 Publishing job ${jobId} to: ${platforms}`);
+
+//     const job = await Job.findOne({ _id: jobId, userId: userId });
+//     if (!job || job.status !== 'completed') {
+//       return res.status(400).json({ success: false, message: 'Job not ready' });
+//     }
+
+//     const generatedContent = job.generatedContent instanceof Map 
+//       ? Object.fromEntries(job.generatedContent) 
+//       : job.generatedContent;
+
+//     const results = [];
+    
+//     for (const platform of platforms) {
+//       const content = generatedContent[platform];
+      
+//       if (!content) {
+//         results.push({ platform, success: false, message: `No ${platform} content` });
+//         continue;
+//       }
+
+//       try {
+//         let result;
+//         switch (platform) {
+//           case 'twitter':
+//             result = await publishToTwitter(content);
+//             break;
+//           case 'linkedin':
+//             result = await publishToLinkedIn(content);
+//             break;
+//           case 'blog':
+//             result = await publishToBlog(content);
+//             break;
+//           case 'instagram':
+//             result = await publishToInstagram(content);
+//             break;
+//           case 'email':
+//             result = await publishToEmail(content);
+//             break;
+//           default:
+//             result = { success: false, message: 'Platform not supported' };
+//         }
+        
+//         results.push({ platform, ...result });
+        
+//       } catch (error) {
+//         results.push({ platform, success: false, message: error.message });
+//       }
+//     }
+
+//     const successful = results.filter(r => r.success).length;
+    
+//     res.json({
+//       success: true,
+//       message: `Published: ${successful} successful, ${results.length - successful} failed`,
+//       results: results
+//     });
+
+//   } catch (error) {
+//     console.error('Publishing error:', error);
+//     res.status(500).json({ 
+//       success: false, 
+//       message: 'Server error',
+//       error: error.message 
+//     });
+//   }
+// };
+
+// module.exports = {
+//   publishContent
+// };
+
+const Job = require('../../models/job');
+const { TwitterApi } = require('twitter-api-v2');
+const path = require('path');
+const axios = require('axios'); // Required for downloading images
+
+// ===============================================================
+// 🚀 TWITTER PUBLISHING (FIXED & ROBUST)
+// ===============================================================
+
+const publishToTwitter = async (twitterContent) => {
+  console.log('--- 🚀 PUBLISHING TO TWITTER ---');
+
+  // 1. SAFELY EXTRACT POST DATA
+  // Fix: Handle if content is an array (from DB) or a single object
+  const post = Array.isArray(twitterContent) ? twitterContent[0] : twitterContent;
+
+  if (!post) {
+    throw new Error('Twitter content structure is invalid.');
+  }
+
+  const tweetText = post.text;
+  
+  // Look for 'image_url' from your database object
+  const imageUrl = post.image_url;
+
+  console.log('Received post object:', post);
+
+  if (imageUrl) {
+    console.log('🖼️ Image URL found:', imageUrl);
+  } else {
+    console.log('No image_url provided in post object.');
+  }
+
+  if (!tweetText) {
+    throw new Error('No tweet text found.');
+  }
+
+  // 2. CHECK CREDENTIALS
+  if (!process.env.TWITTER_API_KEY ||
+      !process.env.TWITTER_API_SECRET ||
+      !process.env.TWITTER_ACCESS_TOKEN ||
+      !process.env.TWITTER_ACCESS_SECRET) {
+        
+    console.error('❌ Missing Twitter OAuth 1.0a credentials in .env file.');
+    throw new Error('Twitter API credentials are not configured on the server. Check .env file.');
+  }
+
+  console.log('📝 Tweet Text:', tweetText);
+
+  try {
+    const twitterClient = new TwitterApi({
+      appKey: process.env.TWITTER_API_KEY,
+      appSecret: process.env.TWITTER_API_SECRET,
+      accessToken: process.env.TWITTER_ACCESS_TOKEN,
+      accessSecret: process.env.TWITTER_ACCESS_SECRET,
+    });
+
+    const rwClient = twitterClient.readWrite;
+    let mediaId = null;
+
+    // 3. IMAGE UPLOAD LOGIC
+    if (imageUrl) {
+      try {
+        console.log('...downloading image from URL...');
+        
+        // Download the image as a buffer
+        const response = await axios.get(imageUrl, { 
+          responseType: 'arraybuffer' 
+        });
+        const imageBuffer = Buffer.from(response.data, 'binary');
+        
+        // Get the MIME type (e.g., 'image/png')
+        const mimeType = response.headers['content-type'];
+        
+        if (!mimeType) {
+          throw new Error('Could not determine image MIME type.');
+        }
+
+        console.log(`...download complete. MIME Type: ${mimeType}`);
+        console.log('...uploading media to Twitter...');
+
+        // Upload the buffer to Twitter (v1.1 API)
+        mediaId = await twitterClient.v1.uploadMedia(imageBuffer, { 
+          mimeType: mimeType 
+        });
+        
+        console.log(`...media uploaded, ID: ${mediaId}`);
+
+      } catch (uploadError) {
+        console.error('❌ Twitter media download/upload failed:', uploadError.message);
+        // We throw here to stop the tweet from going out without the image
+        // If you prefer to post text-only on image failure, remove this throw.
+        throw new Error(`Failed to upload media: ${uploadError.message}`);
+      }
+    }
+
+    // 4. POST TWEET (with or without media)
+    console.log('🐦 Posting tweet...');
+
+    const tweetPayload = { text: tweetText };
+    if (mediaId) {
+      tweetPayload.media = { media_ids: [mediaId] };
+    }
+
+    const { data } = await rwClient.v2.tweet(tweetPayload);
+    
+    console.log('✅ Tweet posted successfully!');
+    console.log(`🔗 URL: https://x.com/i/status/${data.id}`);
+    
+    return { 
+      success: true, 
+      url: `https://x.com/i/status/${data.id}`,
+      tweetId: data.id,
+      real: true
+    };
+
+  } catch (error) {
+    console.error('❌ Twitter API publishing failed.');
+    let simpleErrorMessage = 'Failed to post tweet.';
+
+    if (error.data && error.data.detail) {
+      console.error('API Error Details:', error.data.detail);
+      simpleErrorMessage = `Twitter API Error: ${error.data.detail}`;
+    } else {
+      console.error('Error:', error.message);
+      simpleErrorMessage = error.message;
+    }
+    
+    throw new Error(simpleErrorMessage);
+  }
+};
+
+// ===============================================================
+// 📧 OTHER PLATFORMS (SIMULATED / PLACEHOLDERS)
+// ===============================================================
+
+const publishToEmail = async (emailContent) => {
+  console.log('📧 Email ready');
+  return { 
+    success: true, 
+    message: 'Email content ready',
+    simulated: true
+  };
+};
+
+const publishToLinkedIn = async (linkedinContent) => {
+  console.log('💼 LinkedIn ready');
+  return { 
+    success: true, 
+    message: 'LinkedIn post ready',
+    simulated: true
+  };
+};
+
+const publishToBlog = async (blogContent) => {
+  console.log('📝 Blog ready');
+  return { 
+    success: true, 
+    message: 'Blog post ready',
+    simulated: true
+  };
+};
+
+const publishToInstagram = async (instagramContent) => {
+  console.log('📸 Instagram ready');
+  return { 
+    success: true, 
+    message: 'Instagram post ready',
+    simulated: true
+  };
+};
+
+// ===============================================================
+// 🛎️ MAIN PUBLISHING CONTROLLER
+// ===============================================================
+
+const publishContent = async (req, res) => {
+  try {
+    const { jobId, platforms } = req.body;
+    const userId = req.user.id;
+
+    console.log(`📦 Publishing job ${jobId} to: ${platforms}`);
+
+    // Fetch Job & Verify Ownership
+    const job = await Job.findOne({ _id: jobId, userId: userId });
+    
+    // Check if job exists and is completed
+    if (!job || job.status !== 'completed') {
+      return res.status(400).json({ success: false, message: 'Job not ready or not found' });
+    }
+
+    // Convert Map to Object if necessary (Mongoose Map handling)
+    const generatedContent = job.generatedContent instanceof Map 
+      ? Object.fromEntries(job.generatedContent) 
+      : job.generatedContent;
+
+    const results = [];
+    
+    for (const platform of platforms) {
+      const content = generatedContent[platform];
+      
+      if (!content) {
+        results.push({ platform, success: false, message: `No ${platform} content generated` });
+        continue;
+      }
+
+      try {
+        let result;
+        switch (platform) {
+          case 'twitter':
+            result = await publishToTwitter(content);
+            break;
+          case 'linkedin':
+            result = await publishToLinkedIn(content);
+            break;
+          case 'blog':
+            result = await publishToBlog(content);
+            break;
+          case 'instagram':
+            result = await publishToInstagram(content);
+            break;
+          case 'email':
+            result = await publishToEmail(content);
+            break;
+          default:
+            result = { success: false, message: 'Platform not supported' };
+        }
+        
+        results.push({ platform, ...result });
+        
+      } catch (error) {
+        results.push({ platform, success: false, message: error.message });
+      }
+    }
+
+    const successful = results.filter(r => r.success).length;
+    
+    res.json({
+      success: true,
+      message: `Published: ${successful} successful, ${results.length - successful} failed`,
+      results: results
+    });
+
+  } catch (error) {
+    console.error('Publishing error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error',
+      error: error.message 
+    });
+  }
+};
+
+module.exports = {
+  publishContent
+};
+
+============================================================
+FILE: src/controllers/payments/paymentControllers.js
+============================================================
+
+const Razorpay = require('razorpay');
+const crypto = require('crypto');
+const User = require('../../models/user'); // Adjust path to your User model
+
+// 1. Initialize Razorpay
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
+
+// ---------------------------------------------------------
+// ROUTE 1: Create Order (Initiate Payment)
+// ---------------------------------------------------------
+const createOrder = async (req, res) => {
+  try {
+    const { amount, currency = "INR", planName } = req.body;
+    const userId = req.user.id; // From your auth middleware
+
+    console.log(`Creating order for ${planName} - Amount: ${amount}`);
+
+    const options = {
+      amount: amount * 100, // Razorpay takes amount in paisa (₹499 -> 49900)
+      currency: currency,
+      receipt: `receipt_${Date.now()}`,
+      notes: {
+        userId: userId,
+        plan: planName
+      }
+    };
+
+    const order = await razorpay.orders.create(options);
+
+    res.json({
+      success: true,
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      keyId: process.env.RAZORPAY_KEY_ID // Send Key ID to frontend
+    });
+
+  } catch (error) {
+    console.error("Razorpay Order Error:", error);
+    res.status(500).json({ success: false, message: "Could not create order" });
+  }
+};
+
+// ---------------------------------------------------------
+// ROUTE 2: Verify Payment (Webhook or Manual Verification)
+// ---------------------------------------------------------
+const verifyPayment = async (req, res) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, userId, planName } = req.body;
+
+    // 1. Construct the signature
+    const body = razorpay_order_id + "|" + razorpay_payment_id;
+
+    // 2. Generate expected signature
+    const expectedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .update(body.toString())
+      .digest('hex');
+
+    // 3. Compare
+    const isAuthentic = expectedSignature === razorpay_signature;
+
+    if (isAuthentic) {
+      // ✅ Payment Success! Update Database
+      console.log(`Payment Verified! Updating user ${userId} to plan ${planName}`);
+      
+      await User.findByIdAndUpdate(userId, {
+        subscription: {
+          status: 'active',
+          plan: planName,
+          startDate: new Date(),
+          paymentId: razorpay_payment_id
+        }
+      });
+
+      res.json({ success: true, message: "Payment verified successfully" });
+    } else {
+      res.status(400).json({ success: false, message: "Invalid Signature" });
+    }
+
+  } catch (error) {
+    console.error("Verification Error:", error);
+    res.status(500).json({ success: false, message: "Server Error during verification" });
+  }
+};
+
+module.exports = { createOrder, verifyPayment };
+
+============================================================
+FILE: src/models/job.js
+============================================================
+
+const mongoose = require('mongoose');
+
+const jobSchema = new mongoose.Schema({
+  userId: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'User', 
+    required: true 
+  },
+  status: { 
+    type: String, 
+    enum: ['processing', 'completed', 'failed'], 
+    default: 'processing' 
+  },
+  
+  platforms: [String], // ['twitter', 'linkedin', 'email']
+  originalContent: String, // User's input text
+  generatedContent: {      // AI-generated content will go here
+    type: Map,            // Flexible structure for different platforms
+    of: mongoose.Schema.Types.Mixed
+  },
+  error: String
+}, {
+  timestamps: true // Adds createdAt, updatedAt automatically
+});
+
+module.exports = mongoose.model('Job', jobSchema);
+
+============================================================
+FILE: src/models/user.js
+============================================================
+
+const mongoose = require('mongoose');
+
+const userSchema = new mongoose.Schema({
+  // --- Auth ---
+  name: { type: String },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  
+  // --- App Logic (Keep these at Root) ---
+  onboardingCompleted: { type: Boolean, default: false },
+  isPremium: { type: Boolean, default: false }, // Added as requested
+
+  // Consolidated Credits (Use this single object for logic)
+  credits: { 
+    monthly: { type: Number, default: 100 },
+    used: { type: Number, default: 0 }
+  },
+
+  // --- Brand Profile (Your Onboarding Data) ---
+  brandProfile: {
+    companyName: { type: String, default: '' },
+    industry: { type: String, default: '' },
+    uvp: { type: String, default: '' },
+    targetAudience: { type: String, default: '' },
+    marketingGoal: { type: String, default: '' },
+    
+    brandVoice: {
+      tone: { type: String, default: 'Professional' },
+      description: { type: String, default: '' }
+    },
+    
+    platforms: [{
+      type: String,
+      enum: ['twitter', 'linkedin', 'instagram', 'facebook', 'email', 'blog']
+    }]
+  },
+  subscription: {
+  status: { type: String, default: 'free' }, // free, active
+  plan: { type: String, default: 'starter' }, 
+  startDate: { type: Date },
+  paymentId: { type: String }
+},
+  socialAccounts: {
+    instagram: {
+      instagramId: { type: String },      // The "User ID" (e.g. 2615310)
+      accessToken: { type: String },      // The "Long Lived Token"
+      isConnected: { type: Boolean, default: false }
+    }
+  }
+}, { timestamps: true });
+
+module.exports = mongoose.models.User || mongoose.model('User', userSchema);
+
+============================================================
+FILE: src/routes/index.js
+============================================================
+
+
+const apiRouter = require("express").Router();
+const v1Router = require("./v1/index");
+
+
+apiRouter.use('/v1', v1Router);
+
+module.exports=apiRouter;
+
+============================================================
+FILE: src/routes/v1/auth/authRouter.js
+============================================================
+
+const authRouter=require('express').Router();
+
+const getUserProfile=require("../../../controllers/auth/profile");
+
+const auth=require("../../../utils/auth");
+const signup=require("../../../controllers/auth/signUp");
+const onBoard=require("../../../controllers/auth/onBoard");
+const logout=require("../../../controllers/auth/logout");
+const login=require("../../../controllers/auth/login");
+
+authRouter.post('/logout',logout);
+authRouter.post('/signup',signup);
+authRouter.post('/login',login);
+authRouter.get('/profile',auth,getUserProfile);
+authRouter.post('/onboarding',auth,onBoard);
+
+
+
+module.exports=authRouter;
+
+============================================================
+FILE: src/routes/v1/auth/index.js
+============================================================
+
+
+
+============================================================
+FILE: src/routes/v1/content/genrate.js
+============================================================
+
+const contentRouter=require("express").Router();
+const auth=require("../../../utils/auth");
+const { publishContent}=require("../../../controllers/content/publishContent");
+const {generateContent}=require("../../../controllers/content/generateContent");
+const {getGeneratedContent}=require("../../../controllers/content/getGeneratedContent");
+const isOnboarded=require("../../../utils/isOnboarded");
+
+contentRouter.post('/generate',auth,isOnboarded,generateContent);
+contentRouter.post('/publish',auth,isOnboarded,publishContent);
+contentRouter.get('/history',auth,isOnboarded,getGeneratedContent);
+
+module.exports=contentRouter;
+
+
+
+============================================================
+FILE: src/routes/v1/index.js
+============================================================
+
+const v1Router = require('express').Router();
+const authRouter = require('./auth/authRouter');
+const contentRouter=require("./content/genrate");
+const socialRouter=require("./socialmediaAccounts/index");
+const paymentRouter=require("./payments/paymentRouter");
+v1Router.use('/auth',authRouter);
+v1Router.use('/auth',socialRouter);
+v1Router.use('/content',contentRouter);
+v1Router.use('/user',paymentRouter);
+
+module.exports = v1Router;
+
+============================================================
+FILE: src/routes/v1/payments/paymentRouter.js
+============================================================
+
+const express = require('express');
+const paymentRouter = express.Router();
+const verify = require('../../../utils/auth'); // Your Auth Middleware
+const { createOrder, verifyPayment } = require('../../../controllers/payments/paymentControllers');
+
+paymentRouter.post('/payment/create-order', verify, createOrder);
+paymentRouter.post('/payment/verify', verify, verifyPayment);
+
+module.exports = paymentRouter;
+
+============================================================
+FILE: src/routes/v1/socialmediaAccounts/index.js
+============================================================
+
+const socialRouter=require("express").Router();
+const auth=require("../../../utils/auth");
+
+const {instagramLogin, instagramCallback }=require("../../../controllers/auth/authController")
+socialRouter.get('/instagram/login', instagramLogin);
+socialRouter.get('/instagram/callback',instagramCallback);
+module.exports=socialRouter;
+
+============================================================
+FILE: src/utils/auth.js
+============================================================
+
+const jwt = require("jsonwebtoken");
+const userModel = require("../models/user.js");
+
+const verify = async (req, res, next) => {
+    try {
+        // 1. Try to get token from Header OR Cookie
+        let token = req.cookies.token; 
+        
+        if (req.headers.authorization && req.headers.authorization.startsWith("Bearer")) {
+            token = req.headers.authorization.split(" ")[1];
+        }
+          console.log(token);
+        if (!token) {
+            return res.status(401).json({ message: "Access denied. No token provided." });
+        }
+        
+
+        // 2. Verify token
+        const decoded = jwt.verify(token, process.env.JWT_SECREAT_KEY);
+        
+        // 3. Attach user to request
+        const user = await userModel.findOne({ email: decoded.email });
+        if (!user) {
+            return res.status(401).send("User not found");
+        }
+
+        req.user = user;
+        next();
+    } catch (err) {
+        console.error("Auth Error:", err.message);
+        return res.status(401).json({ message: "Invalid or expired token" });
+    }
+};
+
+module.exports = verify;
+
+============================================================
+FILE: src/utils/isOnboarded.js
+============================================================
+
+const User = require("../models/user"); // Assuming you have a User model
+
+
+const isOnboarded = async (req, res, next) => {
+  // 1. Get user ID from the request (attached by your auth middleware)
+  const userId = req.user.id; 
+
+  // 2. Fetch the REAL user status from DB
+  const user = await User.findById(userId);
+
+  // 3. Check if they skipped onboarding/setup
+  // (Adjust the field name 'profileIncomplete' to match your DB schema)
+  if (!user.isOnboarded) {
+    return res.status(403).json({
+      status: "fail",
+      message: "⛔ Access Denied: Workspace setup required.",
+      error_code: "WORKSPACE_LOCKED"
+    });
+  }
+
+  // 4. If clean, proceed
+  next();
+};
+
+module.exports = isOnboarded;
