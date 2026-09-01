@@ -1,25 +1,43 @@
-const User = require("../models/user"); // Assuming you have a User model
-
+const User = require("../models/user");
 
 const isOnboarded = async (req, res, next) => {
-  // 1. Get user ID from the request (attached by your auth middleware)
-  const userId = req.user.id; 
+  try {
+    // auth middleware should attach the authenticated user
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({
+        status: "fail",
+        message: "Unauthorized",
+      });
+    }
 
-  // 2. Fetch the REAL user status from DB
-  const user = await User.findById(userId);
+    const user = await User.findById(req.user.id);
 
-  // 3. Check if they skipped onboarding/setup
-  // (Adjust the field name 'profileIncomplete' to match your DB schema)
-  if (!user.isOnboarded) {
-    return res.status(403).json({
-      status: "fail",
-      message: "⛔ Access Denied: Workspace setup required.",
-      error_code: "WORKSPACE_LOCKED"
+    if (!user) {
+      return res.status(404).json({
+        status: "fail",
+        message: "User not found",
+      });
+    }
+
+    // IMPORTANT:
+    // MongoDB/User model uses onboardingCompleted.
+    if (!user.onboardingCompleted) {
+      return res.status(403).json({
+        status: "fail",
+        message: "Workspace setup required.",
+        error_code: "WORKSPACE_LOCKED",
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error("Onboarding check error:", error);
+
+    return res.status(500).json({
+      status: "error",
+      message: "Unable to verify onboarding status.",
     });
   }
-
-  // 4. If clean, proceed
-  next();
 };
 
 module.exports = isOnboarded;
