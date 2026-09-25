@@ -38,7 +38,6 @@ app.use('/api', apiRouter);
 app.post('/api/v1/publish/instagram', async (req, res) => {
   try {
     const { userId, imageUrl, caption } = req.body;
-     console.log(req.body);
     // A. Find User in DB
     const user = await User.findById(userId);
     
