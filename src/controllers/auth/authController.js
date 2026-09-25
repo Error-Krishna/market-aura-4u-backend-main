@@ -1,5 +1,5 @@
 const axios = require('axios');
-const User = require('../../models/user'); 
+const User = require('../../models/User'); 
 
 // Helper to wait (sleep)
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
