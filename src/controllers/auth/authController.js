@@ -1,5 +1,6 @@
 const axios = require('axios');
-const User = require('../../models/User'); 
+const User = require('../../models/User');
+const urls = require('../../config/urls');
 
 // Helper to wait (sleep)
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -24,7 +25,7 @@ const instagramLogin = (req, res) => {
     state: userId // We send the DB ID as 'state' to retrieve it later
   });
 
-  res.redirect(`https://api.instagram.com/oauth/authorize?${params}`);
+  res.redirect(`${urls.instagram.oauthAuthorize}?${params}`);
 };
 
 // ---------------- 2. CALLBACK (Finish) ----------------
@@ -38,7 +39,7 @@ const instagramCallback = async (req, res) => {
   try {
     // 1. Get Short Token
     const shortTokenRes = await axios.post(
-      "https://api.instagram.com/oauth/access_token",
+      urls.instagram.accessToken,
       new URLSearchParams({
         client_id: process.env.INSTAGRAM_APP_ID,
         client_secret: process.env.INSTAGRAM_APP_SECRET,
@@ -51,7 +52,7 @@ const instagramCallback = async (req, res) => {
     const { access_token: shortToken, user_id: instaUserId } = shortTokenRes.data;
        
     // 2. Get Long Token
-    const longTokenRes = await axios.get("https://graph.instagram.com/access_token", {
+    const longTokenRes = await axios.get(`${urls.instagram.graphApi}/access_token`, {
       params: {
         grant_type: 'ig_exchange_token',
         client_secret: process.env.INSTAGRAM_APP_SECRET,
@@ -94,7 +95,7 @@ const publishImageToInstagram = async (instaId, accessToken, imageUrl, caption) 
     // Step 1: Create Container
     console.log("Step 1: Creating Media Container...");
     const containerRes = await axios.post(
-      `https://graph.instagram.com/v24.0/${instaId}/media`,
+      `${urls.instagram.graphApi}/v24.0/${instaId}/media`,
       { image_url: imageUrl, caption, access_token: accessToken }
     );
     const containerId = containerRes.data.id;
@@ -107,7 +108,7 @@ const publishImageToInstagram = async (instaId, accessToken, imageUrl, caption) 
       attempts++;
       
       const statusRes = await axios.get(
-        `https://graph.instagram.com/v24.0/${containerId}?fields=status_code&access_token=${accessToken}`
+        `${urls.instagram.graphApi}/v24.0/${containerId}?fields=status_code&access_token=${accessToken}`
       );
       const status = statusRes.data.status_code;
       console.log(`Processing Status: ${status}`);
@@ -121,7 +122,7 @@ const publishImageToInstagram = async (instaId, accessToken, imageUrl, caption) 
     // Step 3: Publish
     console.log("Step 3: Publishing...");
     const publishRes = await axios.post(
-      `https://graph.instagram.com/v24.0/${instaId}/media_publish`,
+      `${urls.instagram.graphApi}/v24.0/${instaId}/media_publish`,
       { creation_id: containerId, access_token: accessToken }
     );
 
