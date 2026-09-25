@@ -1,15 +1,10 @@
 const Job = require('../../models/Job');
 const { TwitterApi } = require('twitter-api-v2');
-const axios = require('axios'); // Required for downloading images
 
-// ===============================================================
-// 🚀 TWITTER PUBLISHING (FIXED & ROBUST)
-// ===============================================================
 
 const publishToTwitter = async (twitterContent) => {
   console.log('--- 🚀 PUBLISHING TO TWITTER ---');
 
-  // 1. SAFELY EXTRACT POST DATA
   const post = Array.isArray(twitterContent) ? twitterContent[0] : twitterContent;
 
   if (!post) {
@@ -118,9 +113,6 @@ const publishToTwitter = async (twitterContent) => {
   }
 };
 
-// ===============================================================
-// 📧 OTHER PLATFORMS (SIMULATED / PLACEHOLDERS)
-// ===============================================================
 
 const publishToEmail = async (emailContent) => {
   return {
@@ -154,9 +146,6 @@ const publishToInstagram = async (instagramContent) => {
   };
 };
 
-// ===============================================================
-// 🛎️ MAIN PUBLISHING CONTROLLER
-// ===============================================================
 
 const publishContent = async (req, res) => {
   try {
