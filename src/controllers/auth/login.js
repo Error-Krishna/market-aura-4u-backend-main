@@ -29,8 +29,6 @@ async function login(req, res) {
       });
     }
 
-    // Generate JWT
-    // Keep `id` consistent with the auth middleware.
     const token = jwt.sign(
       {
         id: user._id,
@@ -42,7 +40,6 @@ async function login(req, res) {
       },
     );
 
-    // Optional cookie
     res.cookie("token", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
