@@ -1,5 +1,6 @@
 const User = require('../../models/User');
 const Job = require('../../models/Job');
+const urls = require('../../config/urls');
 
 const generateContent = async (req, res) => {
   let jobId = null;
@@ -109,7 +110,7 @@ const callAIAndGenerateContent = async (userPrompt, user, platforms) => {
     Return ONLY raw JSON. No markdown.
   `;
 
-  const groqUrl = "https://api.groq.com/openai/v1/chat/completions";
+  const groqUrl = urls.groq.chatCompletions;
   
   const response = await fetch(groqUrl, {
     method: 'POST',
@@ -151,7 +152,7 @@ const callAIAndGenerateContent = async (userPrompt, user, platforms) => {
     // 2. Generate random number for cache busting
     const randomSeed = Math.floor(Math.random() * 10000);
     // 3. Create URL
-    const imageUrl = `https://loremflickr.com/1080/1080/${keyword}?random=${randomSeed}`;
+    const imageUrl = `${urls.image.loremFlickr}/1080/1080/${keyword}?random=${randomSeed}`;
     
     
     generatedContent.imageUrl = imageUrl;
