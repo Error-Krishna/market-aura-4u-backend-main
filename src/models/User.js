@@ -6,17 +6,16 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   
-  // --- App Logic (Keep these at Root) ---
+  // --- App Logic ---
   onboardingCompleted: { type: Boolean, default: false },
-  isPremium: { type: Boolean, default: false }, // Added as requested
+  isPremium: { type: Boolean, default: false },
 
-  // Consolidated Credits (Use this single object for logic)
-  credits: { 
+  credits: {
     monthly: { type: Number, default: 100 },
     used: { type: Number, default: 0 }
   },
 
-  // --- Brand Profile (Your Onboarding Data) ---
+  // --- Brand Profile ---
   brandProfile: {
     companyName: { type: String, default: '' },
     industry: { type: String, default: '' },
@@ -42,8 +41,8 @@ const userSchema = new mongoose.Schema({
 },
   socialAccounts: {
     instagram: {
-      instagramId: { type: String },      // The "User ID" (e.g. 2615310)
-      accessToken: { type: String },      // The "Long Lived Token"
+      instagramId: { type: String },
+      accessToken: { type: String },
       isConnected: { type: Boolean, default: false }
     }
   }
