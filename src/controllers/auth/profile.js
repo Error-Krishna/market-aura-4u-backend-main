@@ -1,9 +1,9 @@
-const User = require('../../models/User'); 
+const User = require('../../models/User');
 
 const getUserProfile = async (req, res) => {
   try {
     const userId = req.user.id;
-    
+
     // Fetch user
     const user = await User.findById(userId).select('-password');
 
@@ -14,14 +14,14 @@ const getUserProfile = async (req, res) => {
     // --- LOGIC EXTRACTION ---
     // 1. Get Brand Profile (Handle if empty)
     const brand = user.brandProfile || {};
-    
+
     // 2. Get Credits (Fallback to defaults if missing)
     const userCredits = user.credits || { monthly: 100, used: 0 };
-    
+
     // 3. Calculate Logic
     const remainingCredits = userCredits.monthly - userCredits.used;
     // Premium logic: Explicit flag OR dynamic check (e.g., if they have > 100 credits)
-    const isPremium = user.isPremium || userCredits.monthly > 100; 
+    const isPremium = user.isPremium || userCredits.monthly > 100;
 
     res.status(200).json({
       success: true,

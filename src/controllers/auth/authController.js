@@ -10,7 +10,7 @@ const instagramLogin = (req, res) => {
   // ✅ FIX: Get ID from URL query (since auth middleware is removed for this route)
   // Example URL: /api/v1/auth/instagram/login?userId=65a9...
   const userId = req.query.userId || req.user?.id;
- 
+
 
   // Safety Check: If we don't know who the user is, stop here.
   if (!userId) {
@@ -20,7 +20,7 @@ const instagramLogin = (req, res) => {
   const params = new URLSearchParams({
     client_id: process.env.INSTAGRAM_APP_ID,
     redirect_uri: process.env.INSTAGRAM_REDIRECT_URI,
-    scope: 'instagram_business_basic,instagram_business_content_publish', 
+    scope: 'instagram_business_basic,instagram_business_content_publish',
     response_type: 'code',
     state: userId // We send the DB ID as 'state' to retrieve it later
   });
@@ -30,12 +30,12 @@ const instagramLogin = (req, res) => {
 
 // ---------------- 2. CALLBACK (Finish) ----------------
 const instagramCallback = async (req, res) => {
-  const { code, state } = req.query; 
+  const { code, state } = req.query;
 
   // Validation
   if (!code) return res.status(400).send("No code provided");
   if (!state) return res.status(400).send("No state provided");
-  
+
   try {
     // 1. Get Short Token
     const shortTokenRes = await axios.post(
@@ -44,13 +44,13 @@ const instagramCallback = async (req, res) => {
         client_id: process.env.INSTAGRAM_APP_ID,
         client_secret: process.env.INSTAGRAM_APP_SECRET,
         grant_type: "authorization_code",
-        redirect_uri: process.env.INSTAGRAM_REDIRECT_URI, 
+        redirect_uri: process.env.INSTAGRAM_REDIRECT_URI,
         code
       })
     );
 
     const { access_token: shortToken, user_id: instaUserId } = shortTokenRes.data;
-       
+
     // 2. Get Long Token
     const longTokenRes = await axios.get(`${urls.instagram.graphApi}/access_token`, {
       params: {
@@ -63,7 +63,7 @@ const instagramCallback = async (req, res) => {
     const longLivedToken = longTokenRes.data.access_token;
 
     // ✅ FIX START: Declare variable outside the block
-    let updatedUser = null; 
+    let updatedUser = null;
 
     if (state) {
       // ✅ Assign to the outer variable
@@ -78,9 +78,9 @@ const instagramCallback = async (req, res) => {
     // ✅ Redirect the user back to your Frontend (Localhost)
     // This looks much better than just showing JSON in the browser.
     res.redirect(`${process.env.FRONTEND_URL}/onboarding?instagramSuccess=true`);
-    
+
     // OR if you prefer JSON (keep your old line):
-    
+
 
   } catch (e) {
     console.error("Callback Error:", e.response?.data || e.message);
@@ -90,7 +90,7 @@ const instagramCallback = async (req, res) => {
 
 // ---------------- 3. PUBLISH HELPER (Logic Only) ----------------
 const publishImageToInstagram = async (instaId, accessToken, imageUrl, caption) => {
-  
+
   try {
     // Step 1: Create Container
     console.log("Step 1: Creating Media Container...");
@@ -106,7 +106,7 @@ const publishImageToInstagram = async (instaId, accessToken, imageUrl, caption) 
     while (!isReady && attempts < 10) {
       await wait(5000); // Wait 5s
       attempts++;
-      
+
       const statusRes = await axios.get(
         `${urls.instagram.graphApi}/v24.0/${containerId}?fields=status_code&access_token=${accessToken}`
       );

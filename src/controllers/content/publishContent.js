@@ -17,7 +17,7 @@ const publishToTwitter = async (twitterContent) => {
   }
 
   const tweetText = post.text;
-  
+
   // Look for 'image_url' from your database object
   const imageUrl = post.image_url;
 
@@ -31,7 +31,7 @@ const publishToTwitter = async (twitterContent) => {
       !process.env.TWITTER_API_SECRET ||
       !process.env.TWITTER_ACCESS_TOKEN ||
       !process.env.TWITTER_ACCESS_SECRET) {
-        
+
     console.error('❌ Missing Twitter OAuth 1.0a credentials in .env file.');
     throw new Error('Twitter API credentials are not configured on the server. Check .env file.');
   }
@@ -52,16 +52,16 @@ const publishToTwitter = async (twitterContent) => {
     if (imageUrl) {
       try {
         console.log('...downloading image from URL...');
-        
+
         // Download the image as a buffer
-        const response = await axios.get(imageUrl, { 
-          responseType: 'arraybuffer' 
+        const response = await axios.get(imageUrl, {
+          responseType: 'arraybuffer'
         });
         const imageBuffer = Buffer.from(response.data, 'binary');
-        
+
         // Get the MIME type (e.g., 'image/png')
         const mimeType = response.headers['content-type'];
-        
+
         if (!mimeType) {
           throw new Error('Could not determine image MIME type.');
         }
@@ -70,10 +70,10 @@ const publishToTwitter = async (twitterContent) => {
         console.log('...uploading media to Twitter...');
 
         // Upload the buffer to Twitter (v1.1 API)
-        mediaId = await twitterClient.v1.uploadMedia(imageBuffer, { 
-          mimeType: mimeType 
+        mediaId = await twitterClient.v1.uploadMedia(imageBuffer, {
+          mimeType: mimeType
         });
-        
+
 
       } catch (uploadError) {
         console.error('❌ Twitter media download/upload failed:', uploadError.message);
@@ -91,12 +91,12 @@ const publishToTwitter = async (twitterContent) => {
     }
 
     const { data } = await rwClient.v2.tweet(tweetPayload);
-    
+
     console.log('✅ Tweet posted successfully!');
     console.log(`🔗 URL: https://x.com/i/status/${data.id}`);
-    
-    return { 
-      success: true, 
+
+    return {
+      success: true,
       url: `https://x.com/i/status/${data.id}`,
       tweetId: data.id,
       real: true
@@ -113,7 +113,7 @@ const publishToTwitter = async (twitterContent) => {
       console.error('Error:', error.message);
       simpleErrorMessage = error.message;
     }
-    
+
     throw new Error(simpleErrorMessage);
   }
 };
@@ -123,32 +123,32 @@ const publishToTwitter = async (twitterContent) => {
 // ===============================================================
 
 const publishToEmail = async (emailContent) => {
-  return { 
-    success: true, 
+  return {
+    success: true,
     message: 'Email content ready',
     simulated: true
   };
 };
 
 const publishToLinkedIn = async (linkedinContent) => {
-  return { 
-    success: true, 
+  return {
+    success: true,
     message: 'LinkedIn post ready',
     simulated: true
   };
 };
 
 const publishToBlog = async (blogContent) => {
-  return { 
-    success: true, 
+  return {
+    success: true,
     message: 'Blog post ready',
     simulated: true
   };
 };
 
 const publishToInstagram = async (instagramContent) => {
-  return { 
-    success: true, 
+  return {
+    success: true,
     message: 'Instagram post ready',
     simulated: true
   };
@@ -167,22 +167,22 @@ const publishContent = async (req, res) => {
 
     // Fetch Job & Verify Ownership
     const job = await Job.findOne({ _id: jobId, userId: userId });
-    
+
     // Check if job exists and is completed
     if (!job || job.status !== 'completed') {
       return res.status(400).json({ success: false, message: 'Job not ready or not found' });
     }
 
     // Convert Map to Object if necessary (Mongoose Map handling)
-    const generatedContent = job.generatedContent instanceof Map 
-      ? Object.fromEntries(job.generatedContent) 
+    const generatedContent = job.generatedContent instanceof Map
+      ? Object.fromEntries(job.generatedContent)
       : job.generatedContent;
 
     const results = [];
-    
+
     for (const platform of platforms) {
       const content = generatedContent[platform];
-      
+
       if (!content) {
         results.push({ platform, success: false, message: `No ${platform} content generated` });
         continue;
@@ -209,16 +209,16 @@ const publishContent = async (req, res) => {
           default:
             result = { success: false, message: 'Platform not supported' };
         }
-        
+
         results.push({ platform, ...result });
-        
+
       } catch (error) {
         results.push({ platform, success: false, message: error.message });
       }
     }
 
     const successful = results.filter(r => r.success).length;
-    
+
     res.json({
       success: true,
       message: `Published: ${successful} successful, ${results.length - successful} failed`,
@@ -227,10 +227,10 @@ const publishContent = async (req, res) => {
 
   } catch (error) {
     console.error('Publishing error:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Server error',
-      error: error.message 
+      error: error.message
     });
   }
 };

@@ -22,8 +22,8 @@ const generateContent = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    const platformsToGenerate = user.brandProfile?.platforms?.length > 0 
-      ? user.brandProfile.platforms 
+    const platformsToGenerate = user.brandProfile?.platforms?.length > 0
+      ? user.brandProfile.platforms
       : ['instagram', 'twitter'];
 
     const job = new Job({
@@ -65,14 +65,14 @@ const callAIAndGenerateContent = async (userPrompt, user, platforms) => {
 
   const systemPrompt = `
     You are an expert Social Media Copywriter for "${brandProfile.companyName || 'our brand'}".
-    
+
     --- 1. BRAND INTELLIGENCE ---
     INDUSTRY: ${brandProfile.industry || 'General Business'}
     TARGET AUDIENCE: ${brandProfile.targetAudience?.description || 'General Audience'}
        - Their Pain Point: "${brandProfile.targetAudience?.painPoint || ''}"
        - Their Desire: "${brandProfile.targetAudience?.desire || ''}"
     UNIQUE VALUE PROPOSITION (UVP): "${brandProfile.uvp || ''}"
-    BRAND VOICE: ${brandProfile.brandVoice?.tone || 'Professional'} 
+    BRAND VOICE: ${brandProfile.brandVoice?.tone || 'Professional'}
     EXTRA VOICE RULES: ${brandProfile.brandVoice?.description || 'Be human and engaging.'}
 
     --- 2. THE USER REQUEST ---
@@ -84,7 +84,7 @@ const callAIAndGenerateContent = async (userPrompt, user, platforms) => {
 
     ${platforms.includes('twitter') ? `
     "twitter": [
-      { 
+      {
         "text": "Write a punchy tweet (max 280 chars). Use slang if appropriate. Include ONLY 2-3 specific hashtags. Do NOT use generic tags.",
         "image_url": "PLACEHOLDER_IMAGE"
       }
@@ -111,12 +111,12 @@ const callAIAndGenerateContent = async (userPrompt, user, platforms) => {
   `;
 
   const groqUrl = urls.groq.chatCompletions;
-  
+
   const response = await fetch(groqUrl, {
     method: 'POST',
-    headers: { 
+    headers: {
       'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
-      'Content-Type': 'application/json' 
+      'Content-Type': 'application/json'
     },
     body: JSON.stringify({
       model: "openai/gpt-oss-20b",
@@ -128,14 +128,14 @@ const callAIAndGenerateContent = async (userPrompt, user, platforms) => {
       temperature: 0.7
     })
   });
- 
+
   if (!response.ok) {
     const errText = await response.text();
     throw new Error(`Groq API Error: ${response.status} - ${errText}`);
   }
 
   const data = await response.json();
-  
+
   if (!data.choices || !data.choices[0].message.content) {
     throw new Error("Groq returned empty response");
   }
@@ -145,7 +145,7 @@ const callAIAndGenerateContent = async (userPrompt, user, platforms) => {
 
   // --- CHANGED TO LOREMFLICKR FOR RELIABILITY ---
   const needsImage = platforms.some(p => ['twitter', 'instagram', 'facebook'].includes(p));
-  
+
   if (needsImage) {
     // 1. Get first word of prompt for keyword (e.g. "Coffee")
     const keyword = encodeURIComponent(userPrompt.split(' ')[0]);
@@ -153,8 +153,8 @@ const callAIAndGenerateContent = async (userPrompt, user, platforms) => {
     const randomSeed = Math.floor(Math.random() * 10000);
     // 3. Create URL
     const imageUrl = `${urls.image.loremFlickr}/1080/1080/${keyword}?random=${randomSeed}`;
-    
-    
+
+
     generatedContent.imageUrl = imageUrl;
 
     if (generatedContent.twitter && Array.isArray(generatedContent.twitter) && generatedContent.twitter[0]) {
@@ -164,7 +164,7 @@ const callAIAndGenerateContent = async (userPrompt, user, platforms) => {
       generatedContent.instagram.image_url = imageUrl;
     }
   }
-  
+
   return generatedContent;
 };
 

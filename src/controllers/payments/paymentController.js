@@ -66,7 +66,7 @@ const verifyPayment = async (req, res) => {
     if (isAuthentic) {
       // ✅ Payment Success! Update Database
       console.log(`Payment Verified! Updating user ${userId} to plan ${planName}`);
-      
+
       await User.findByIdAndUpdate(userId, {
         subscription: {
           status: 'active',

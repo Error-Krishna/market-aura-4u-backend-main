@@ -11,7 +11,7 @@ const getGeneratedContent = async (req, res) => {
     // Return all jobs regardless of status so the frontend can show
     // processing/failed states too (not just completed content).
     // .sort({ createdAt: -1 }) puts the newest content at the top.
-    const history = await Job.find({ 
+    const history = await Job.find({
       userId: req.user.id
     })
     .sort({ createdAt: -1 });
@@ -25,9 +25,9 @@ const getGeneratedContent = async (req, res) => {
 
   } catch (error) {
     console.error('Error fetching history:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server Error fetching content history' 
+    res.status(500).json({
+      success: false,
+      message: 'Server Error fetching content history'
     });
   }
 };

@@ -5,7 +5,7 @@ const userSchema = new mongoose.Schema({
   name: { type: String },
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  
+
   // --- App Logic ---
   onboardingCompleted: { type: Boolean, default: false },
   isPremium: { type: Boolean, default: false },
@@ -22,12 +22,12 @@ const userSchema = new mongoose.Schema({
     uvp: { type: String, default: '' },
     targetAudience: { type: String, default: '' },
     marketingGoal: { type: String, default: '' },
-    
+
     brandVoice: {
       tone: { type: String, default: 'Professional' },
       description: { type: String, default: '' }
     },
-    
+
     platforms: [{
       type: String,
       enum: ['twitter', 'linkedin', 'instagram', 'facebook', 'email', 'blog']
@@ -35,7 +35,7 @@ const userSchema = new mongoose.Schema({
   },
   subscription: {
   status: { type: String, default: 'free' }, // free, active
-  plan: { type: String, default: 'starter' }, 
+  plan: { type: String, default: 'starter' },
   startDate: { type: Date },
   paymentId: { type: String }
 },
