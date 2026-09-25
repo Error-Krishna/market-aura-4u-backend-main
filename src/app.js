@@ -6,7 +6,7 @@ const port = process.env.PORT || 3000; // Added fallback port just in case
 const connectDB = require('./config/db');
 const User = require('./models/User');
 const apiRouter = require("./routes");
-const { instagramLogin, instagramCallback, publishImageToInstagram } = require("../src/controllers/auth/authController");
+const { publishImageToInstagram } = require("./controllers/auth/authController");
 const cors = require('cors');
 
 // ✅ CORS FIX: Allow dynamic origins (Friends, Postman, Localhost)
