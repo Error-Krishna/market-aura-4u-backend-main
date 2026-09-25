@@ -1,6 +1,5 @@
 const Job = require('../../models/Job');
 const { TwitterApi } = require('twitter-api-v2');
-const path = require('path');
 const axios = require('axios'); // Required for downloading images
 
 // ===============================================================
