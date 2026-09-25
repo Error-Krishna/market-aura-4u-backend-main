@@ -2,7 +2,7 @@ const express = require('express');
 const app = express();
 const cookieParser = require("cookie-parser");
 const dotenv = require('dotenv').config();
-const port = process.env.PORT || 3000; // Added fallback port just in case
+const port = process.env.PORT || 3000;
 const connectDB = require('./config/db');
 const User = require('./models/User');
 const apiRouter = require("./routes");
@@ -42,7 +42,7 @@ app.post('/api/v1/publish/instagram', async (req, res) => {
     res.json({ success: true, postId: result.id });
 
   } catch (error) {
-    console.error(error); // Log error to terminal so you can see it
+    console.error(error);
     res.status(500).json({ error: error.message });
   }
 });
