@@ -21,7 +21,6 @@ const publishToTwitter = async (twitterContent) => {
   // Look for 'image_url' from your database object
   const imageUrl = post.image_url;
 
-  console.log('Received post object:', post);
 
   if (imageUrl) {
     console.log('🖼️ Image URL found:', imageUrl);
