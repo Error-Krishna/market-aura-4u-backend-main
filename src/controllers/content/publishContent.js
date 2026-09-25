@@ -10,7 +10,6 @@ const publishToTwitter = async (twitterContent) => {
   console.log('--- 🚀 PUBLISHING TO TWITTER ---');
 
   // 1. SAFELY EXTRACT POST DATA
-  // Fix: Handle if content is an array (from DB) or a single object
   const post = Array.isArray(twitterContent) ? twitterContent[0] : twitterContent;
 
   if (!post) {
@@ -88,7 +87,6 @@ const publishToTwitter = async (twitterContent) => {
       } catch (uploadError) {
         console.error('❌ Twitter media download/upload failed:', uploadError.message);
         // We throw here to stop the tweet from going out without the image
-        // If you prefer to post text-only on image failure, remove this throw.
         throw new Error(`Failed to upload media: ${uploadError.message}`);
       }
     }
