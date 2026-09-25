@@ -1,6 +1,5 @@
 function logout(req, res) {
-  // Assuming you are using JWT stored in cookies for authentication
-  res.clearCookie('token'); // Clear the token cookie
+  res.clearCookie('token');
   return res.status(200).json({ message: 'user Logged out successfully' });
 }
 

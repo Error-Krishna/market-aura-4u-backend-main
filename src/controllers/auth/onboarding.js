@@ -1,24 +1,24 @@
-const User = require("../../models/user"); // Check if your file is 'User.js' or 'user.js'
+const User = require("../../models/User");
 
 const completeOnboarding = async (req, res) => {
   // 1. GET DATA FROM FRONTEND
   // Make sure your frontend form sends these exact names
-  const { 
-    companyName, 
-    industry, 
-    brandTone, 
-    uvp,            
-    targetAudience,  
-    platforms 
+  const {
+    companyName,
+    industry,
+    brandTone,
+    uvp,
+    targetAudience,
+    platforms
   } = req.body;
-  
+
   const userId = req.user.id;
 
   try {
     // 2. PREPARE THE UPDATE OBJECT
     // We must nest the data inside "brandProfile" to match your Schema
     const updates = {
-      
+
       // This stays at the Root Level
       onboardingCompleted: true,
 
@@ -26,18 +26,18 @@ const completeOnboarding = async (req, res) => {
       brandProfile: {
         companyName: companyName || '',
         industry: industry || '',
-        
+
         // The "Brain" of your AI
-        uvp: uvp || '', 
-        targetAudience: targetAudience || '', 
-        
+        uvp: uvp || '',
+        targetAudience: targetAudience || '',
+
         brandVoice: {
           tone: brandTone || 'Professional',
           description: '' // You can add a text input for this later
         },
-        
+
         // Ensure this is an array like ["twitter", "linkedin"]
-        platforms: platforms || [] 
+        platforms: platforms || []
       }
     };
 
@@ -61,10 +61,10 @@ const completeOnboarding = async (req, res) => {
 
   } catch (error) {
     console.error("Onboarding Error:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server Error during onboarding', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Server Error during onboarding',
+      error: error.message
     });
   }
 };

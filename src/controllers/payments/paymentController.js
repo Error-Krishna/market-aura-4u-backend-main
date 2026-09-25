@@ -1,6 +1,6 @@
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
-const User = require('../../models/user'); // Adjust path to your User model
+const User = require('../../models/User');
 
 // 1. Initialize Razorpay
 const razorpay = new Razorpay({
@@ -8,9 +8,6 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
-// ---------------------------------------------------------
-// ROUTE 1: Create Order (Initiate Payment)
-// ---------------------------------------------------------
 const createOrder = async (req, res) => {
   try {
     const { amount, currency = "INR", planName } = req.body;
@@ -19,7 +16,7 @@ const createOrder = async (req, res) => {
     console.log(`Creating order for ${planName} - Amount: ${amount}`);
 
     const options = {
-      amount: amount * 100, // Razorpay takes amount in paisa (₹499 -> 49900)
+      amount: amount * 100,
       currency: currency,
       receipt: `receipt_${Date.now()}`,
       notes: {
@@ -44,9 +41,6 @@ const createOrder = async (req, res) => {
   }
 };
 
-// ---------------------------------------------------------
-// ROUTE 2: Verify Payment (Webhook or Manual Verification)
-// ---------------------------------------------------------
 const verifyPayment = async (req, res) => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature, userId, planName } = req.body;
@@ -66,7 +60,7 @@ const verifyPayment = async (req, res) => {
     if (isAuthentic) {
       // ✅ Payment Success! Update Database
       console.log(`Payment Verified! Updating user ${userId} to plan ${planName}`);
-      
+
       await User.findByIdAndUpdate(userId, {
         subscription: {
           status: 'active',

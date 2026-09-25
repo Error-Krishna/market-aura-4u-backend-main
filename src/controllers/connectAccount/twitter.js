@@ -1,5 +1,5 @@
 const { TwitterApi } = require('twitter-api-v2');
-const User = require('../../models/user.js');
+const User = require('../../models/User');
 
 // 1. INITIALIZE CLIENT (Global Config for OAuth)
 const twitterClient = new TwitterApi({
@@ -9,7 +9,7 @@ const twitterClient = new TwitterApi({
 
 // A temporary map to store 'state' (security check) vs 'userId'
 // In production, use Redis or a DB table for this.
-const stateCache = new Map(); 
+const stateCache = new Map();
 
 // --- ROUTE A: START LOGIN (GET /api/auth/twitter/login) ---
 const initTwitterLogin = async (req, res) => {
@@ -52,7 +52,7 @@ const twitterCallback = async (req, res) => {
 
     // SAVE TO DB
     await User.findByIdAndUpdate(userId, {
-      $push: { 
+      $push: {
         connectedAccounts: {
           platformName: 'twitter',
           twitterAccessToken: accessToken,
