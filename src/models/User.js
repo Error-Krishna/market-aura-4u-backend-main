@@ -34,11 +34,11 @@ const userSchema = new mongoose.Schema({
     }]
   },
   subscription: {
-  status: { type: String, default: 'free' }, // free, active
-  plan: { type: String, default: 'starter' },
-  startDate: { type: Date },
-  paymentId: { type: String }
-},
+    status: { type: String, default: 'free' }, // free, active
+    plan: { type: String, default: 'starter' },
+    startDate: { type: Date },
+    paymentId: { type: String }
+  },
   socialAccounts: {
     instagram: {
       instagramId: { type: String },
