@@ -12,15 +12,15 @@ const jobSchema = new mongoose.Schema({
     default: 'processing' 
   },
   
-  platforms: [String], // ['twitter', 'linkedin', 'email']
-  originalContent: String, // User's input text
-  generatedContent: {      // AI-generated content will go here
-    type: Map,            // Flexible structure for different platforms
+  platforms: [String],
+  originalContent: String,
+  generatedContent: {
+    type: Map,
     of: mongoose.Schema.Types.Mixed
   },
   error: String
 }, {
-  timestamps: true, // Adds createdAt, updatedAt automatically
+  timestamps: true,
   toJSON: {
     virtuals: true,
     transform: (_doc, ret) => {
