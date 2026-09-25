@@ -2,7 +2,7 @@ const authRouter=require('express').Router();
 
 const getUserProfile=require("../../../controllers/auth/profile");
 
-const auth=require("../../../utils/auth");
+const auth=require("../../../middleware/auth");
 const signup=require("../../../controllers/auth/signup");
 const onBoard=require("../../../controllers/auth/onboarding");
 const logout=require("../../../controllers/auth/logout");
