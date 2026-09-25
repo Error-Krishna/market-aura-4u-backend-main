@@ -10,7 +10,6 @@ const instagramLogin = (req, res) => {
   // Example URL: /api/v1/auth/instagram/login?userId=65a9...
   const userId = req.query.userId || req.user?.id;
  
-  console.log(`🚀 Starting Login for User ID: ${userId}`);
 
   // Safety Check: If we don't know who the user is, stop here.
   if (!userId) {
@@ -34,7 +33,6 @@ const instagramCallback = async (req, res) => {
 
   // Validation
   if (!code) return res.status(400).send("No code provided");
-  console.log("instagram callback state (User ID) is: " + state);
   if (!state) return res.status(400).send("No state provided");
   
   try {
@@ -74,10 +72,6 @@ const instagramCallback = async (req, res) => {
         'socialAccounts.instagram.isConnected': true,
         'socialAccounts.instagram.connectedAt': new Date()
       }, { new: true });
-      
-      console.log(`✅ Success! Database updated for User: ${updatedUser?.email || state}`);
-    } else {
-      console.log("⚠️ Warning: Tokens received but NOT saved.");
     }
 
     // ✅ Redirect the user back to your Frontend (Localhost)

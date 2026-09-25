@@ -3,7 +3,6 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
 async function login(req, res) {
-  console.log("Login request received");
 
   const { email, password } = req.body;
 
