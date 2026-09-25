@@ -123,7 +123,6 @@ const publishToTwitter = async (twitterContent) => {
 // ===============================================================
 
 const publishToEmail = async (emailContent) => {
-  console.log('📧 Email ready');
   return { 
     success: true, 
     message: 'Email content ready',
@@ -132,7 +131,6 @@ const publishToEmail = async (emailContent) => {
 };
 
 const publishToLinkedIn = async (linkedinContent) => {
-  console.log('💼 LinkedIn ready');
   return { 
     success: true, 
     message: 'LinkedIn post ready',
@@ -141,7 +139,6 @@ const publishToLinkedIn = async (linkedinContent) => {
 };
 
 const publishToBlog = async (blogContent) => {
-  console.log('📝 Blog ready');
   return { 
     success: true, 
     message: 'Blog post ready',
@@ -150,7 +147,6 @@ const publishToBlog = async (blogContent) => {
 };
 
 const publishToInstagram = async (instagramContent) => {
-  console.log('📸 Instagram ready');
   return { 
     success: true, 
     message: 'Instagram post ready',
