@@ -1,7 +1,7 @@
 const v1Router = require('express').Router();
 const authRouter = require('./auth/authRouter');
 const contentRouter=require("./content/contentRouter");
-const socialRouter=require("./socialmediaAccounts/socialRouter");
+const socialRouter=require("./social/socialRouter");
 const paymentRouter=require("./payments/paymentRouter");
 v1Router.use('/auth',authRouter);
 v1Router.use('/auth',socialRouter);
