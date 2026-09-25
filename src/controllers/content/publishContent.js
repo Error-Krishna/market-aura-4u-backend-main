@@ -22,12 +22,6 @@ const publishToTwitter = async (twitterContent) => {
   const imageUrl = post.image_url;
 
 
-  if (imageUrl) {
-    console.log('🖼️ Image URL found:', imageUrl);
-  } else {
-    console.log('No image_url provided in post object.');
-  }
-
   if (!tweetText) {
     throw new Error('No tweet text found.');
   }
