@@ -36,7 +36,6 @@ const publishToTwitter = async (twitterContent) => {
     throw new Error('Twitter API credentials are not configured on the server. Check .env file.');
   }
 
-  console.log('📝 Tweet Text:', tweetText);
 
   try {
     const twitterClient = new TwitterApi({
@@ -75,7 +74,6 @@ const publishToTwitter = async (twitterContent) => {
           mimeType: mimeType 
         });
         
-        console.log(`...media uploaded, ID: ${mediaId}`);
 
       } catch (uploadError) {
         console.error('❌ Twitter media download/upload failed:', uploadError.message);
