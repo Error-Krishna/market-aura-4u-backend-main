@@ -9,18 +9,6 @@ const apiRouter = require("./routes");
 const { publishImageToInstagram } = require("./controllers/auth/authController");
 const cors = require('cors');
 
-// ✅ CORS FIX: Allow dynamic origins (Friends, Postman, Localhost)
-// app.use(cors({
-//   origin: function (origin, callback) {
-//     // Allow requests with no origin (like mobile apps, curl, or Postman)
-//     if (!origin) return callback(null, true);
-    
-//     // Allow any origin (This lets your friend connect from their localhost)
-//     return callback(null, true);
-//   },
-//   methods: ["GET", "POST", "PUT", "DELETE"],
-//   credentials: true // Crucial for cookies
-// }));
 
 app.use(cors({
   origin: true, // <--- This allows your friend, localhost, and Postman dynamically
