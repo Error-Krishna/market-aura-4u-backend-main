@@ -1,4 +1,3 @@
-// controllers/contentController.js
 const Job = require('../../models/Job');
 
 const getGeneratedContent = async (req, res) => {
