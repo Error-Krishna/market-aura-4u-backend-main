@@ -1,4 +1,4 @@
-const User = require("../../models/user"); // Check if your file is 'User.js' or 'user.js'
+const User = require("../../models/User"); // Check if your file is 'User.js' or 'user.js'
 
 const completeOnboarding = async (req, res) => {
   // 1. GET DATA FROM FRONTEND

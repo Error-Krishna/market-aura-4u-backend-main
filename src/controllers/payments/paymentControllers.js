@@ -1,6 +1,6 @@
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
-const User = require('../../models/user'); // Adjust path to your User model
+const User = require('../../models/User'); // Adjust path to your User model
 
 // 1. Initialize Razorpay
 const razorpay = new Razorpay({

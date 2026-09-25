@@ -1,5 +1,5 @@
-const User = require('../../models/user.js');
-const Job = require('../../models/job');
+const User = require('../../models/User.js');
+const Job = require('../../models/Job');
 
 const generateContent = async (req, res) => {
   let jobId = null;
