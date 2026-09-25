@@ -77,7 +77,7 @@ const instagramCallback = async (req, res) => {
 
     // ✅ Redirect the user back to your Frontend (Localhost)
     // This looks much better than just showing JSON in the browser.
-    res.redirect(`http://localhost:5173/onboarding?instagramSuccess=true`);
+    res.redirect(`${process.env.FRONTEND_URL}/onboarding?instagramSuccess=true`);
     
     // OR if you prefer JSON (keep your old line):
     
