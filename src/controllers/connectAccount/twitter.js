@@ -1,5 +1,5 @@
 const { TwitterApi } = require('twitter-api-v2');
-const User = require('../../models/User.js');
+const User = require('../../models/User');
 
 // 1. INITIALIZE CLIENT (Global Config for OAuth)
 const twitterClient = new TwitterApi({

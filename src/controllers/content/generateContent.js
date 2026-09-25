@@ -1,4 +1,4 @@
-const User = require('../../models/User.js');
+const User = require('../../models/User');
 const Job = require('../../models/Job');
 
 const generateContent = async (req, res) => {
