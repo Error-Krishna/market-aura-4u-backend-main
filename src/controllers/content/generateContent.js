@@ -37,7 +37,6 @@ const generateContent = async (req, res) => {
     console.log(`Job ${jobId} started for: ${platformsToGenerate.join(', ')}`);
 
     const generatedContent = await callAIAndGenerateContent(prompt, user, platformsToGenerate);
-    console.log("Generated Content with Image:", generatedContent);
 
     const finishedJob = await Job.findByIdAndUpdate(jobId, {
       status: 'completed',
@@ -154,7 +153,6 @@ const callAIAndGenerateContent = async (userPrompt, user, platforms) => {
     // 3. Create URL
     const imageUrl = `https://loremflickr.com/1080/1080/${keyword}?random=${randomSeed}`;
     
-    console.log("Generated Image URL:", imageUrl);
     
     generatedContent.imageUrl = imageUrl;
 
