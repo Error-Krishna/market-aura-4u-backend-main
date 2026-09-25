@@ -26,13 +26,11 @@ const signup = async (req, res) => {
       email,
       password: hashedPassword,
 
-      // Explicitly mark new users as not onboarded.
       onboardingCompleted: false,
     });
 
     await user.save();
 
-    // Keep JWT payload consistent with login.
     const token = jwt.sign(
       {
         id: user._id,
@@ -60,7 +58,6 @@ const signup = async (req, res) => {
         id: user._id,
         email: user.email,
 
-        // New users are not onboarded yet.
         isOnboarded: user.onboardingCompleted,
 
         isPremium: user.isPremium,
