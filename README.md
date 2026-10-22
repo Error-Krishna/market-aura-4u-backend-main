@@ -2,6 +2,25 @@
 
 Backend API for Market Aura 4U, a marketing SaaS application for generating and publishing social media content.
 
+See [generation validation and limits](docs/generation-safety.md) for the current
+request contract, configuration, offline tests, and scaling limitations.
+
+See [private recommender authentication](docs/recommender-auth.md) for Cloud Run
+identity tokens, audience configuration, local development and IAM prerequisites.
+
+See [CORS origin configuration](docs/cors.md) for allowed frontend origins,
+production requirements, and credentialed request behavior.
+
+See [authentication validation and limits](docs/auth-safety.md) for registration
+and login payloads, attempt budgets, and proxy/scaling limitations.
+
+See [verified proxy configuration](docs/auth-proxy.md) for safe client-IP resolution
+and the [shared-limiter storage proposal](docs/shared-limits-proposal.md) for the
+database change awaiting approval before cross-instance quotas can be implemented.
+
+See [onboarding and safe user responses](docs/onboarding.md) for completion
+validation, partial brand updates, and the onboarding/profile response contracts.
+
 ## Tech Stack
 
 - Node.js

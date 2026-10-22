@@ -1,9 +1,17 @@
 const User = require('../../models/User');
 const Job = require('../../models/Job');
 const urls = require('../../config/urls');
+const { validGenerationBody, validBrandProfile } = require('../../utils/generationInput');
+const generationConfig = require('../../config/generation')();
+const { createGenerationLimiter } = require('../../utils/generationLimiter');
+const generationLimiter = createGenerationLimiter(generationConfig);
+const { createRecommenderClient } = require('../../utils/recommenderClient');
+const fetchRecommendation = createRecommenderClient(urls.recommender);
+const { generationFailure } = require('../../utils/generationFailure');
 
 const generateContent = async (req, res) => {
   let jobId = null;
+  let reservation;
 
   try {
     if (!req.user || !req.user.id) {
@@ -11,21 +19,91 @@ const generateContent = async (req, res) => {
     }
 
     const userId = req.user.id;
-    const { prompt } = req.body;
-
-    if (!prompt || prompt.trim().length < 5) {
-      return res.status(400).json({ success: false, message: 'Topic is too short.' });
+    if (!validGenerationBody(req.body)) {
+      return res.status(400).json({
+        success: false, code: 'INVALID_GENERATION_INPUT',
+        message: 'Send only a prompt string: at least 5 characters after trimming and at most 5000 characters in total.'
+      });
     }
+    const prompt = req.body.prompt.trim();
 
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
+    // 1. Validate Brand Profile Completeness
+    const bp = user.brandProfile || {};
+    if (!validBrandProfile(bp)) {
+      return res.status(400).json({
+        success: false, code: 'INVALID_BRAND_PROFILE',
+        message: 'Incomplete brand profile or invalid brand fields. Complete onboarding with company name, industry, UVP, target audience, and supported platforms; text fields must not exceed 5000 characters.'
+      });
+    }
+    const companyName = bp.companyName?.trim();
+    const industry = bp.industry?.trim();
+    const uvp = bp.uvp?.trim();
+    const targetAudience = typeof bp.targetAudience === 'string'
+      ? bp.targetAudience.trim()
+      : (bp.targetAudience?.description?.trim() || '');
+
     const platformsToGenerate = user.brandProfile?.platforms?.length > 0
       ? user.brandProfile.platforms
       : ['instagram', 'twitter'];
 
+    reservation = generationLimiter.acquire(userId);
+    if (!reservation.allowed) {
+      const messages = {
+        GENERATION_RATE_LIMIT: 'Generation request limit reached. Please try again later.',
+        GENERATION_IN_PROGRESS: 'A generation is already in progress. Please wait for it to finish.',
+        GENERATION_CAPACITY: 'Generation is temporarily at capacity. Please try again later.',
+      };
+      res.set('Retry-After', String(reservation.retryAfter));
+      return res.status(reservation.status).json({
+        success: false, code: reservation.code, message: messages[reservation.code],
+      });
+    }
+
+    // 2. Fetch Recommendation from Python Service (with strict timeout & graceful fallback)
+    const recommenderPayload = {
+      brand_name: companyName,
+      business_description: uvp,
+      industry: industry,
+      target_audience: targetAudience,
+    };
+    if (bp.brandVoice?.tone?.trim()) {
+      recommenderPayload.brand_tone = bp.brandVoice.tone.trim();
+    }
+
+    let recommendation = null;
+    let recommenderReason = null;
+
+    try {
+      const recResponse = await fetchRecommendation(recommenderPayload);
+
+      if (recResponse.ok) {
+        const data = recResponse.data;
+        const candidateRec = (data && data.recommendation) ? data.recommendation : data;
+        if (candidateRec && (candidateRec.recommended_topic || candidateRec.topic || candidateRec.trending_topics || candidateRec.brand_name)) {
+          recommendation = candidateRec;
+        } else {
+          recommenderReason = 'Malformed recommendation response structure';
+          console.warn('Recommender warning:', recommenderReason);
+        }
+      } else {
+        recommenderReason = `Recommender returned HTTP ${recResponse.status}`;
+        console.warn('Recommender warning:', recommenderReason);
+      }
+    } catch (recErr) {
+      recommenderReason = recErr.code === 'RECOMMENDER_AUTH_UNAVAILABLE'
+        ? 'Recommender authentication unavailable'
+        : recErr.name === 'TimeoutError'
+        ? `Recommender request timed out after ${urls.recommender.timeoutMs}ms`
+        : 'Recommender service unavailable';
+      console.warn('Recommender warning:', recommenderReason);
+    }
+
+    // 3. Initialize Job Record
     const job = new Job({
       userId: userId,
       platforms: platformsToGenerate,
@@ -37,7 +115,14 @@ const generateContent = async (req, res) => {
 
     console.log(`Job ${jobId} started for: ${platformsToGenerate.join(', ')}`);
 
-    const generatedContent = await callAIAndGenerateContent(prompt, user, platformsToGenerate);
+    // 4. Generate Content via LLM
+    const generatedContent = await callAIAndGenerateContent(
+      prompt,
+      user,
+      platformsToGenerate,
+      recommendation,
+      recommenderReason
+    );
 
     const finishedJob = await Job.findByIdAndUpdate(jobId, {
       status: 'completed',
@@ -52,29 +137,182 @@ const generateContent = async (req, res) => {
     });
 
   } catch (error) {
-    console.error(`Job ${jobId} failed:`, error.message);
+    const failure = generationFailure(error);
+    // Provider/driver messages can contain credentials, prompts or response bodies.
+    console.error(`Job ${jobId} failed: ${failure.code}`);
     if (jobId) {
-      await Job.findByIdAndUpdate(jobId, { status: 'failed', error: error.message });
+      try {
+        await Job.findByIdAndUpdate(jobId, { status: 'failed', error: failure.message });
+      } catch {
+        console.error(`Could not persist failure status for job ${jobId}`);
+      }
     }
-    res.status(500).json({ success: false, message: 'Generation failed', error: error.message });
+    if (failure.status === 504) {
+      return res.status(504).json({
+        success: false, code: failure.code, message: failure.message,
+      });
+    }
+    res.status(500).json({
+      success: false, code: failure.code, message: failure.message, error: failure.message,
+    });
+  } finally {
+    // Hold the slot through provider and persistence work, even if the client
+    // disconnects. Releasing on socket close would allow overlapping calls.
+    if (reservation?.allowed) reservation.release();
   }
 };
 
-const callAIAndGenerateContent = async (userPrompt, user, platforms) => {
+const cleanAndParseJSON = (rawText) => {
+  if (!rawText || typeof rawText !== 'string') {
+    throw new Error('Groq returned empty response');
+  }
+  let cleaned = rawText.trim();
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  }
+  try {
+    return JSON.parse(cleaned);
+  } catch (err) {
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        return JSON.parse(jsonMatch[0]);
+      } catch (innerErr) {
+        throw new Error(`Failed to parse LLM JSON response: ${err.message}`);
+      }
+    }
+    throw new Error(`Failed to parse LLM JSON response: ${err.message}`);
+  }
+};
+
+const validateAndNormalizeContent = (content, platforms, isCarousel) => {
+  if (!content || typeof content !== 'object' || Array.isArray(content)) {
+    throw new Error('LLM output is not a valid JSON object');
+  }
+
+  const nonemptyText = value => typeof value === 'string' && value.trim().length > 0;
+  const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  for (const platform of platforms) {
+    if (!Object.hasOwn(content, platform)) {
+      throw new Error(`LLM output missing required "${platform}" object or content`);
+    }
+  }
+
+  if (platforms.includes('twitter')) {
+    if (!Array.isArray(content.twitter) || content.twitter.length === 0
+      || !content.twitter.every(tweet => object(tweet) && nonemptyText(tweet.text)
+        && Array.from(tweet.text).length <= 280)) {
+      throw new Error('LLM output requires non-empty "twitter" posts of at most 280 characters');
+    }
+  }
+
+  for (const platform of ['linkedin', 'facebook', 'blog']) {
+    if (platforms.includes(platform) && (!Array.isArray(content[platform])
+      || content[platform].length === 0 || !content[platform].every(nonemptyText))) {
+      throw new Error(`LLM output requires a non-empty "${platform}" array of non-empty strings`);
+    }
+  }
+
+  if (platforms.includes('email') && (!object(content.email)
+    || !nonemptyText(content.email.subject) || !nonemptyText(content.email.body))) {
+    throw new Error('LLM output requires non-empty "email.subject" and "email.body" strings');
+  }
+
+  if (platforms.includes('instagram')) {
+    if (!object(content.instagram)) {
+      throw new Error('LLM output missing required "instagram" object');
+    }
+    if (typeof content.instagram.caption !== 'string' || content.instagram.caption.trim().length === 0) {
+      throw new Error('LLM output missing non-empty "instagram.caption" string');
+    }
+
+    if (isCarousel) {
+      content.instagram.content_type = 'carousel';
+      // Preserve caption-based recovery for legacy responses that omit slides.
+      // Supplied slides must contain real content; never stringify invalid values.
+      if (content.instagram.slides === undefined) {
+        // Recover 3 slides from caption
+        const sentences = content.instagram.caption.split(/(?<=[.!?])\s+/).filter(Boolean);
+        content.instagram.slides = [
+          { slide_number: 1, headline: "Overview", body: sentences[0] || content.instagram.caption },
+          { slide_number: 2, headline: "Key Details", body: sentences.slice(1, -1).join(' ') || sentences[0] || content.instagram.caption },
+          { slide_number: 3, headline: "Take Action", body: sentences[sentences.length - 1] || "Save this post and visit link in bio." }
+        ];
+      } else {
+        if (!Array.isArray(content.instagram.slides) || content.instagram.slides.length < 3) {
+          throw new Error('LLM output requires at least three valid Instagram carousel slides');
+        }
+        content.instagram.slides = content.instagram.slides.slice(0, 7).map((slide, index) => {
+          if (nonemptyText(slide)) {
+            return { slide_number: index + 1, headline: slide.slice(0, 50), body: slide };
+          }
+          if (!object(slide) || !nonemptyText(slide.headline) || !nonemptyText(slide.body)) {
+            throw new Error('LLM output requires non-empty carousel slide headlines and bodies');
+          }
+          return { slide_number: index + 1, headline: slide.headline, body: slide.body };
+        });
+      }
+    } else {
+      content.instagram.content_type = 'image';
+    }
+  }
+
+  // Only requested platforms may reach persistence or results. Provider-added
+  // metadata is discarded; trusted image and grounding fields are added below.
+  return Object.fromEntries(platforms.map(platform => [platform, content[platform]]));
+};
+
+const callAIAndGenerateContent = async (userPrompt, user, platforms, recommendation = null, recommenderReason = null) => {
   const { brandProfile } = user;
+  const targetAudienceStr = typeof brandProfile?.targetAudience === 'string'
+    ? brandProfile.targetAudience
+    : (brandProfile?.targetAudience?.description || 'General Audience');
+
+  const recPostingWindow = recommendation?.recommended_posting_time
+    ? `${recommendation.recommended_posting_time.day} ${recommendation.recommended_posting_time.start}-${recommendation.recommended_posting_time.end} (${recommendation.recommended_posting_time.timezone})`
+    : (recommendation?.recommended_posting_time?.utc || 'N/A');
+
+  const recFormat = recommendation?.recommended_content_type?.value || recommendation?.recommended_format || 'N/A';
+  const isCarousel = (recFormat && recFormat.toLowerCase() === 'carousel') || /carousel|swipe|slides/i.test(userPrompt);
+
+  const recHashtags = Array.isArray(recommendation?.recommended_hashtags)
+    ? recommendation.recommended_hashtags.join(' ')
+    : (Array.isArray(recommendation?.trending_topics)
+      ? recommendation.trending_topics.map(t => typeof t === 'string' ? (t.startsWith('#') ? t : `#${t}`) : `#${t.topic || t}`).join(' ')
+      : 'N/A');
+
+  const recEngagement = recommendation?.predicted_engagement?.value != null
+    ? `${(recommendation.predicted_engagement.value * 100).toFixed(2)}% engagement rate (${recommendation.predicted_engagement.label || 'Estimated'})`
+    : (recommendation?.engagement_prediction?.predicted_likes != null ? `${recommendation.engagement_prediction.predicted_likes} estimated likes` : 'N/A');
+
+  const recommendationSignals = recommendation ? `
+    --- 1.5. DATA-BACKED RECOMMENDATION SIGNALS ---
+    GUIDANCE ROLE: ADVISORY SUPPORTING GUIDANCE ONLY (Never override user brief)
+    RECOMMENDED TOPIC FOCUS: "${recommendation.recommended_topic || recommendation.topic || 'N/A'}"
+    OPTIMAL CONTENT FORMAT: "${recFormat}"
+    RECOMMENDED POSTING WINDOW: "${recPostingWindow}"
+    RELEVANT TRENDING HASHTAGS: ${recHashtags}
+    PREDICTED ENGAGEMENT POTENTIAL: ${recEngagement}
+
+    CRITICAL RULES ON GUIDANCE HIERARCHY:
+    1. The USER BRIEF in Section 2 is AUTHORITATIVE and the primary directive. Never replace, alter, or hijack the user's specific requested topic with the recommended topic focus.
+    2. Use the recommended topic focus ONLY as an advisory supporting hook, angle, or context to enrich the user's brief.
+    3. Seamlessly include the relevant trending hashtags at the end of the post.
+    4. Follow the optimal content format (${isCarousel ? 'multi-slide carousel' : 'single image post'}).
+` : '';
 
   const systemPrompt = `
     You are an expert Social Media Copywriter for "${brandProfile.companyName || 'our brand'}".
 
     --- 1. BRAND INTELLIGENCE ---
     INDUSTRY: ${brandProfile.industry || 'General Business'}
-    TARGET AUDIENCE: ${brandProfile.targetAudience?.description || 'General Audience'}
+    TARGET AUDIENCE: ${targetAudienceStr}
        - Their Pain Point: "${brandProfile.targetAudience?.painPoint || ''}"
        - Their Desire: "${brandProfile.targetAudience?.desire || ''}"
     UNIQUE VALUE PROPOSITION (UVP): "${brandProfile.uvp || ''}"
     BRAND VOICE: ${brandProfile.brandVoice?.tone || 'Professional'}
     EXTRA VOICE RULES: ${brandProfile.brandVoice?.description || 'Be human and engaging.'}
-
+${recommendationSignals}
     --- 2. THE USER REQUEST ---
     Topic: "${userPrompt}"
 
@@ -95,11 +333,44 @@ const callAIAndGenerateContent = async (userPrompt, user, platforms) => {
       "Write a professional post with short paragraphs and line breaks."
     ],` : ''}
 
-    ${platforms.includes('instagram') ? `
+    ${platforms.includes('facebook') ? `
+    "facebook": [
+      "Write an engaging Facebook post with a clear hook, useful details, and a call to action."
+    ],` : ''}
+
+    ${platforms.includes('blog') ? `
+    "blog": [
+      "Write a concise blog draft with a title, introductory paragraph, useful sections, and a conclusion."
+    ],` : ''}
+
+    ${platforms.includes('instagram') ? (isCarousel ? `
     "instagram": {
-      "caption": "Write an engaging caption with a hook and emojis.",
+      "caption": "Write an engaging, complete caption that introduces the carousel with a hook, summarizes the value, prompts readers to swipe through, and concludes with recommended hashtags.",
+      "content_type": "carousel",
+      "slides": [
+        {
+          "slide_number": 1,
+          "headline": "Hook / Title Slide Headline",
+          "body": "Opening context or hook sentence"
+        },
+        {
+          "slide_number": 2,
+          "headline": "Core Insight 1",
+          "body": "Actionable insight, step, or value nugget"
+        },
+        {
+          "slide_number": 3,
+          "headline": "Call To Action",
+          "body": "Clear next step for the reader (e.g., Save this post, comment below, check link in bio)"
+        }
+      ],
       "image_url": "PLACEHOLDER_IMAGE"
-    },` : ''}
+    },` : `
+    "instagram": {
+      "caption": "Write an engaging single-image caption with a hook, body paragraphs, call to action, and recommended hashtags.",
+      "content_type": "image",
+      "image_url": "PLACEHOLDER_IMAGE"
+    },`) : ''}
 
     ${platforms.includes('email') ? `
     "email": {
@@ -111,37 +382,52 @@ const callAIAndGenerateContent = async (userPrompt, user, platforms) => {
   `;
 
   const groqUrl = urls.groq.chatCompletions;
+  const groqSignal = AbortSignal.timeout(generationConfig.groqTimeoutMs);
+  let data;
 
-  const response = await fetch(groqUrl, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: "openai/gpt-oss-20b",
-      messages: [
-        { role: "system", content: systemPrompt},
-        { role: "user", content: userPrompt }
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.7
-    })
-  });
+  try {
+    const response = await fetch(groqUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      signal: groqSignal,
+      body: JSON.stringify({
+        model: process.env.GROQ_MODEL || "openai/gpt-oss-20b",
+        messages: [
+          { role: "system", content: systemPrompt},
+          { role: "user", content: userPrompt }
+        ],
+        n: 1,
+        response_format: { type: "json_object" },
+        temperature: 0.7,
+        max_completion_tokens: generationConfig.groqMaxOutputTokens,
+      })
+    });
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Groq API Error: ${response.status} - ${errText}`);
+    if (!response.ok) {
+      // Discard an upstream error body; never persist or log provider diagnostics.
+      await response.body?.cancel();
+      throw new Error('Content provider request failed');
+    }
+    data = await response.json();
+  } catch (error) {
+    // Body reads may throw AbortError instead of the deadline's TimeoutError.
+    // Preserve the deadline reason so both phases return the same API response.
+    throw groqSignal.aborted ? groqSignal.reason : error;
   }
 
-  const data = await response.json();
-
-  if (!data.choices || !data.choices[0].message.content) {
+  if (!Array.isArray(data?.choices) || !data.choices[0]?.message?.content) {
     throw new Error("Groq returned empty response");
+  }
+  if (data.choices[0].finish_reason === 'length') {
+    throw new Error('Groq response exceeded the completion token limit');
   }
 
   const rawText = data.choices[0].message.content;
-  let generatedContent = JSON.parse(rawText);
+  const parsed = cleanAndParseJSON(rawText);
+  let generatedContent = validateAndNormalizeContent(parsed, platforms, isCarousel);
 
   // --- CHANGED TO LOREMFLICKR FOR RELIABILITY ---
   const needsImage = platforms.some(p => ['twitter', 'instagram', 'facebook'].includes(p));
@@ -165,7 +451,21 @@ const callAIAndGenerateContent = async (userPrompt, user, platforms) => {
     }
   }
 
+  generatedContent.grounding = recommendation ? {
+    isGrounded: true,
+    recommendation: recommendation
+  } : {
+    isGrounded: false,
+    recommendation: null,
+    reason: recommenderReason || 'Ungrounded fallback generation'
+  };
+
   return generatedContent;
 };
 
-module.exports = { generateContent };
+module.exports = {
+  generateContent,
+  callAIAndGenerateContent,
+  cleanAndParseJSON,
+  validateAndNormalizeContent,
+};
