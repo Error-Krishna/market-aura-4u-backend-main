@@ -345,7 +345,7 @@ ${recommendationSignals}
 
     ${platforms.includes('instagram') ? (isCarousel ? `
     "instagram": {
-      "caption": "Write an engaging, complete caption that introduces the carousel with a hook, summarizes the value, prompts readers to swipe through, and concludes with recommended hashtags.",
+      "caption": "Write an engaging, complete caption that introduces the carousel with a hook, summarizes the value, prompts readers to swipe through, and concludes with recommended hashtags. Match every step promised in the caption to an actionable step in the slides, in the same order, within 3-7 slides. Count actual steps, not hook or CTA slides; do not promise omitted steps.",
       "content_type": "carousel",
       "slides": [
         {
