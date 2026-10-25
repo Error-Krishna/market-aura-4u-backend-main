@@ -217,7 +217,9 @@ describe('generateContent Controller Integration & Resiliency Suite', () => {
     assert.ok(groqSystemPrompt.includes('--- 1.5. DATA-BACKED RECOMMENDATION SIGNALS ---'));
     assert.ok(groqSystemPrompt.includes('Clean Beauty Formulations'));
     assert.ok(groqSystemPrompt.includes('Carousel'));
-    assert.ok(groqSystemPrompt.includes('#cleanbeauty'));
+    assert.ok(!groqSystemPrompt.includes('#cleanbeauty'));
+    assert.ok(!groqSystemPrompt.includes('#veganskincare'));
+    assert.ok(groqSystemPrompt.includes('Use only hashtags directly relevant to the user brief and brand.'));
 
     // Verify grounded response payload
     const job = res.getBody().job;

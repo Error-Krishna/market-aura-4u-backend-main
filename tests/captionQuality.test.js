@@ -173,8 +173,67 @@ describe('Offline Caption Quality, Prompt Hierarchy & Resilience Suite', () => {
     assert.ok(interceptedSystemPrompt.includes('GUIDANCE ROLE: ADVISORY SUPPORTING GUIDANCE ONLY'));
     assert.ok(interceptedSystemPrompt.includes('Never replace, alter, or hijack the user\'s specific requested topic'));
     assert.ok(interceptedSystemPrompt.includes('RECOMMENDED TOPIC FOCUS: "skincare"'));
-    assert.ok(interceptedSystemPrompt.includes('#skincare #norvina #instabeauty #wakeupandmakeup'));
+    assert.ok(!interceptedSystemPrompt.includes('#norvina'));
+    assert.ok(!interceptedSystemPrompt.includes('#wakeupandmakeup'));
   });
+
+  for (const carousel of [false, true]) {
+    for (const source of ['recommended_hashtags', 'trending_topics', 'unavailable']) {
+      test(`Hashtag relevance: ${source} cannot seed unrelated tags into ${carousel ? 'carousel' : 'single-image'} generation`, async () => {
+        const recommendation = source === 'unavailable' ? null : {
+          recommended_topic: 'AI experimentation',
+          recommended_content_type: { value: carousel ? 'carousel' : 'image' },
+          ...(source === 'recommended_hashtags'
+            ? { recommended_hashtags: ['#neworleans', '#makeuponpoint', '#eyebrows'] }
+            : { trending_topics: ['neworleans', { topic: 'makeuponpoint' }, 'eyebrows'] }),
+          predicted_engagement: { value: 0.019, label: 'Low' },
+        };
+        const savedRecommendation = structuredClone(recommendation);
+        let calls = 0;
+        const generated = {
+          twitter: [{ text: 'Explore Monday AI experiments. #AI #MachineLearning' }],
+          instagram: {
+            caption: 'Explore Monday AI experiments. #AI #MachineLearning',
+            ...(carousel ? { slides: [
+              { headline: 'Explore', body: 'Explore AI experiments.' },
+              { headline: 'Collaborate', body: 'Share ideas with researchers.' },
+              { headline: 'Learn', body: 'Follow new research.' },
+            ] } : {}),
+          },
+        };
+        globalThis.fetch = async (_url, options) => {
+          calls++;
+          const request = JSON.parse(options.body);
+          const prompt = request.messages.find(message => message.role === 'system').content;
+          for (const unrelated of ['neworleans', 'makeuponpoint', 'eyebrows']) {
+            assert.ok(!prompt.includes(unrelated), `Dataset candidate leaked into the provider prompt: ${unrelated}`);
+          }
+          assert.ok(prompt.includes('Use only hashtags directly relevant to the user brief and brand.'));
+          assert.ok(!prompt.includes('recommended hashtags'));
+          assert.ok(prompt.includes('Monday'));
+          if (recommendation) {
+            assert.ok(prompt.includes(`OPTIMAL CONTENT FORMAT: "${carousel ? 'carousel' : 'image'}"`));
+            assert.ok(prompt.includes('1.90% engagement rate (Low)'));
+          }
+          assert.strictEqual(request.n, 1);
+          assert.strictEqual(request.max_completion_tokens, 1536);
+          return { ok: true, json: async () => ({ choices: [{
+            finish_reason: 'stop', message: { content: JSON.stringify(generated) },
+          }] }) };
+        };
+        const result = await callAIAndGenerateContent(
+          carousel ? 'Create an AI research carousel' : 'Create an AI research post',
+          { brandProfile: { companyName: 'Monday', industry: 'AI-ML', uvp: 'AI experiments', targetAudience: 'Developers and researchers' } },
+          ['twitter', 'instagram'], recommendation,
+        );
+        assert.strictEqual(calls, 1);
+        assert.strictEqual(result.instagram.content_type, carousel ? 'carousel' : 'image');
+        assert.strictEqual(result.grounding.isGrounded, recommendation !== null);
+        assert.deepStrictEqual(result.grounding.recommendation, savedRecommendation);
+        assert.deepStrictEqual(recommendation, savedRecommendation);
+      });
+    }
+  }
 
   // 2. Structured Carousel Generation & Validation
   test('Structured Carousel: Format carousel generates 3-7 slides and valid caption string', async () => {

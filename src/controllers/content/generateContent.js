@@ -275,12 +275,6 @@ const callAIAndGenerateContent = async (userPrompt, user, platforms, recommendat
   const recFormat = recommendation?.recommended_content_type?.value || recommendation?.recommended_format || 'N/A';
   const isCarousel = (recFormat && recFormat.toLowerCase() === 'carousel') || /carousel|swipe|slides/i.test(userPrompt);
 
-  const recHashtags = Array.isArray(recommendation?.recommended_hashtags)
-    ? recommendation.recommended_hashtags.join(' ')
-    : (Array.isArray(recommendation?.trending_topics)
-      ? recommendation.trending_topics.map(t => typeof t === 'string' ? (t.startsWith('#') ? t : `#${t}`) : `#${t.topic || t}`).join(' ')
-      : 'N/A');
-
   const recEngagement = recommendation?.predicted_engagement?.value != null
     ? `${(recommendation.predicted_engagement.value * 100).toFixed(2)}% engagement rate (${recommendation.predicted_engagement.label || 'Estimated'})`
     : (recommendation?.engagement_prediction?.predicted_likes != null ? `${recommendation.engagement_prediction.predicted_likes} estimated likes` : 'N/A');
@@ -291,14 +285,12 @@ const callAIAndGenerateContent = async (userPrompt, user, platforms, recommendat
     RECOMMENDED TOPIC FOCUS: "${recommendation.recommended_topic || recommendation.topic || 'N/A'}"
     OPTIMAL CONTENT FORMAT: "${recFormat}"
     RECOMMENDED POSTING WINDOW: "${recPostingWindow}"
-    RELEVANT TRENDING HASHTAGS: ${recHashtags}
     PREDICTED ENGAGEMENT POTENTIAL: ${recEngagement}
 
     CRITICAL RULES ON GUIDANCE HIERARCHY:
     1. The USER BRIEF in Section 2 is AUTHORITATIVE and the primary directive. Never replace, alter, or hijack the user's specific requested topic with the recommended topic focus.
     2. Use the recommended topic focus ONLY as an advisory supporting hook, angle, or context to enrich the user's brief.
-    3. Seamlessly include the relevant trending hashtags at the end of the post.
-    4. Follow the optimal content format (${isCarousel ? 'multi-slide carousel' : 'single image post'}).
+    3. Follow the optimal content format (${isCarousel ? 'multi-slide carousel' : 'single image post'}).
 ` : '';
 
   const systemPrompt = `
@@ -318,6 +310,7 @@ ${recommendationSignals}
 
     --- 3. OUTPUT INSTRUCTIONS (STRICT JSON) ---
     You must return a valid JSON object containing keys only for these platforms: ${platforms.join(', ')}.
+    Use only hashtags directly relevant to the user brief and brand.
     Follow these specific rules for each platform:
 
     ${platforms.includes('twitter') ? `
@@ -345,7 +338,7 @@ ${recommendationSignals}
 
     ${platforms.includes('instagram') ? (isCarousel ? `
     "instagram": {
-      "caption": "Write an engaging, complete caption that introduces the carousel with a hook, summarizes the value, prompts readers to swipe through, and concludes with recommended hashtags. Match every step promised in the caption to an actionable step in the slides, in the same order, within 3-7 slides. Count actual steps, not hook or CTA slides; do not promise omitted steps.",
+      "caption": "Write an engaging, complete caption that introduces the carousel with a hook, summarizes the value, prompts readers to swipe through, and concludes with relevant hashtags. Match every step promised in the caption to an actionable step in the slides, in the same order, within 3-7 slides. Count actual steps, not hook or CTA slides; do not promise omitted steps.",
       "content_type": "carousel",
       "slides": [
         {
@@ -367,7 +360,7 @@ ${recommendationSignals}
       "image_url": "PLACEHOLDER_IMAGE"
     },` : `
     "instagram": {
-      "caption": "Write an engaging single-image caption with a hook, body paragraphs, call to action, and recommended hashtags.",
+      "caption": "Write an engaging single-image caption with a hook, body paragraphs, call to action, and relevant hashtags.",
       "content_type": "image",
       "image_url": "PLACEHOLDER_IMAGE"
     },`) : ''}
