@@ -10,4 +10,5 @@ module.exports = {
   image: {
     loremFlickr: 'https://loremflickr.com',
   },
+  recommender: require('./recommender')(),
 };

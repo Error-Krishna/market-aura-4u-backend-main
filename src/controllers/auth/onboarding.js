@@ -1,71 +1,50 @@
-const User = require("../../models/User");
+const User = require('../../models/User');
+const { parseOnboardingBody } = require('../../utils/onboardingInput');
+const { USER_RESPONSE_FIELDS, onboardingUser } = require('../../utils/userResponse');
 
 const completeOnboarding = async (req, res) => {
-  // 1. GET DATA FROM FRONTEND
-  // Make sure your frontend form sends these exact names
-  const {
-    companyName,
-    industry,
-    brandTone,
-    uvp,
-    targetAudience,
-    platforms
-  } = req.body;
-
-  const userId = req.user.id;
+  if (!req.user?.id) {
+    return res.status(401).json({ success: false, message: 'Unauthorized' });
+  }
+  const profile = parseOnboardingBody(req.body);
+  if (!profile) {
+    return res.status(400).json({
+      success: false, code: 'INVALID_ONBOARDING_INPUT',
+      message: 'Provide company name, industry, brand tone, UVP, target audience and at least one unique supported platform. Text fields must be nonblank strings of at most 5000 characters.',
+    });
+  }
 
   try {
-    // 2. PREPARE THE UPDATE OBJECT
-    // We must nest the data inside "brandProfile" to match your Schema
-    const updates = {
-
-      // This stays at the Root Level
-      onboardingCompleted: true,
-
-      // Everything else goes inside the nested object
-      brandProfile: {
-        companyName: companyName || '',
-        industry: industry || '',
-
-        // The "Brain" of your AI
-        uvp: uvp || '',
-        targetAudience: targetAudience || '',
-
-        brandVoice: {
-          tone: brandTone || 'Professional',
-          description: '' // You can add a text input for this later
-        },
-
-        // Ensure this is an array like ["twitter", "linkedin"]
-        platforms: platforms || []
-      }
-    };
-
-    // 3. UPDATE DATABASE
+    // One atomic write marks completion only with validated context. Dot paths
+    // preserve other brand settings and never accept account/privilege overrides.
     const updatedUser = await User.findByIdAndUpdate(
-      userId,
-      { $set: updates }, // Use $set to be safe with nested updates
-      { new: true, runValidators: true }
-    ).select('-password');
+      req.user.id,
+      { $set: {
+        onboardingCompleted: true,
+        'brandProfile.companyName': profile.companyName,
+        'brandProfile.industry': profile.industry,
+        'brandProfile.uvp': profile.uvp,
+        'brandProfile.targetAudience': profile.targetAudience,
+        'brandProfile.brandVoice.tone': profile.brandVoice.tone,
+        'brandProfile.platforms': profile.platforms,
+      } },
+      { new: true, runValidators: true },
+    ).select(USER_RESPONSE_FIELDS);
 
     if (!updatedUser) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
-
-    // 4. SUCCESS RESPONSE
-    res.status(200).json({
-      success: true,
-      message: 'Onboarding completed successfully',
-      user: updatedUser
+    return res.status(200).json({
+      success: true, message: 'Onboarding completed successfully', user: onboardingUser(updatedUser),
     });
-
   } catch (error) {
-    console.error("Onboarding Error:", error);
-    res.status(500).json({
-      success: false,
-      message: 'Server Error during onboarding',
-      error: error.message
-    });
+    if (error.name === 'ValidationError' || error.name === 'CastError') {
+      return res.status(400).json({
+        success: false, code: 'INVALID_ONBOARDING_INPUT', message: 'Invalid onboarding fields.',
+      });
+    }
+    console.error('Onboarding failed');
+    return res.status(500).json({ success: false, message: 'Server Error during onboarding' });
   }
 };
 

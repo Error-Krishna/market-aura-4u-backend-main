@@ -1,15 +1,17 @@
 const User = require("../../models/User");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
+const { validAuthBody } = require('../../utils/authInput');
+const { withAccountLimit } = require('../../middleware/authAttempts');
 
 const signup = async (req, res) => {
-  const { email, password } = req.body;
-
-  if (!email || !password) {
+  if (!validAuthBody(req.body, 'signup')) {
     return res.status(400).json({
-      message: "Email and Password are required",
+      success: false, code: 'INVALID_AUTH_INPUT',
+      message: 'Send only a valid email address and a password of at least 8 characters and at most 72 UTF-8 bytes. A password cannot contain only whitespace.',
     });
   }
+  const { email, password } = req.body;
 
   try {
     const existingUser = await User.findOne({ email });
@@ -64,7 +66,7 @@ const signup = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Signup error:", error);
+    console.error('Signup failed');
 
     return res.status(500).json({
       message: "Server Error",
@@ -72,4 +74,4 @@ const signup = async (req, res) => {
   }
 };
 
-module.exports = signup;
+module.exports = withAccountLimit('signup', signup);

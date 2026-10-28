@@ -2,14 +2,28 @@ const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const User = require('../../models/User');
 
-// 1. Initialize Razorpay
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+// Razorpay is initialized lazily inside createOrder so the backend can
+// start without payment credentials configured (e.g. in development).
+const _getRazorpayInstance = () => {
+  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+    return null;
+  }
+  return new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID,
+    key_secret: process.env.RAZORPAY_KEY_SECRET,
+  });
+};
 
 const createOrder = async (req, res) => {
   try {
+    const razorpay = _getRazorpayInstance();
+    if (!razorpay) {
+      return res.status(503).json({
+        success: false,
+        message: 'Payment service is not configured on this server.'
+      });
+    }
+
     const { amount, currency = "INR", planName } = req.body;
     const userId = req.user.id; // From your auth middleware
 

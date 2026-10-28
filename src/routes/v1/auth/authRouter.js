@@ -2,7 +2,7 @@ const authRouter = require('express').Router();
 
 const getUserProfile = require('../../../controllers/auth/profile');
 const auth = require('../../../middleware/auth');
-const signup = require('../../../controllers/auth/signup');
+const signup = require('../../../controllers/auth/signUp');
 const onBoard = require('../../../controllers/auth/onboarding');
 const logout = require('../../../controllers/auth/logout');
 const login = require('../../../controllers/auth/login');

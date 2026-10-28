@@ -1,18 +1,20 @@
 const User = require("../../models/User");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const { validAuthBody } = require('../../utils/authInput');
+const { withAccountLimit } = require('../../middleware/authAttempts');
 
 async function login(req, res) {
 
+  if (!validAuthBody(req.body, 'login')) {
+    return res.status(400).json({
+      success: false, code: 'INVALID_AUTH_INPUT',
+      message: 'Send only a valid email address and a nonempty password of at most 4096 UTF-8 bytes.',
+    });
+  }
   const { email, password } = req.body;
 
   try {
-    if (!email || !password) {
-      return res.status(400).json({
-        message: "Email and password are required",
-      });
-    }
-
     const user = await User.findOne({ email });
 
     if (!user) {
@@ -63,7 +65,7 @@ async function login(req, res) {
       },
     });
   } catch (error) {
-    console.error("Login error:", error);
+    console.error('Login failed');
 
     return res.status(500).json({
       message: "Internal Server Error",
@@ -71,4 +73,4 @@ async function login(req, res) {
   }
 }
 
-module.exports = login;
+module.exports = withAccountLimit('login', login);
