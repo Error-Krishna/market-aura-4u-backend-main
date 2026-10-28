@@ -36,7 +36,9 @@ function readRecommenderConfig(env = process.env) {
   if (health.origin !== recommend.origin) {
     throw new Error('RECOMMENDER_HEALTH_URL must use the same origin as RECOMMENDER_URL');
   }
-  const timeout = env.RECOMMENDER_TIMEOUT_MS ?? '15000';
+  // Remote scale-to-zero requests include cold startup (measured at ~72s).
+  // Explicit overrides remain authoritative; local development stays fast.
+  const timeout = env.RECOMMENDER_TIMEOUT_MS ?? (authMode === 'cloud-run' ? '120000' : '15000');
   const timeoutMs = Number(timeout);
   if (!/^\d+$/.test(timeout) || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120000) {
     throw new Error('RECOMMENDER_TIMEOUT_MS must be an integer between 1 and 120000');

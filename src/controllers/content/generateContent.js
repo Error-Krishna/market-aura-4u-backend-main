@@ -8,10 +8,13 @@ const generationLimiter = createGenerationLimiter(generationConfig);
 const { createRecommenderClient } = require('../../utils/recommenderClient');
 const fetchRecommendation = createRecommenderClient(urls.recommender);
 const { generationFailure } = require('../../utils/generationFailure');
+const { createGenerationDiagnostics } = require('../../utils/generationDiagnostics');
+const { GenerationValidationError } = require('../../utils/generationValidationError');
 
 const generateContent = async (req, res) => {
   let jobId = null;
   let reservation;
+  const diagnostics = createGenerationDiagnostics();
 
   try {
     if (!req.user || !req.user.id) {
@@ -104,6 +107,7 @@ const generateContent = async (req, res) => {
     }
 
     // 3. Initialize Job Record
+    diagnostics.enter('job_create');
     const job = new Job({
       userId: userId,
       platforms: platformsToGenerate,
@@ -121,9 +125,11 @@ const generateContent = async (req, res) => {
       user,
       platformsToGenerate,
       recommendation,
-      recommenderReason
+      recommenderReason,
+      diagnostics
     );
 
+    diagnostics.enter('job_complete');
     const finishedJob = await Job.findByIdAndUpdate(jobId, {
       status: 'completed',
       generatedContent: generatedContent,
@@ -139,12 +145,13 @@ const generateContent = async (req, res) => {
   } catch (error) {
     const failure = generationFailure(error);
     // Provider/driver messages can contain credentials, prompts or response bodies.
-    console.error(`Job ${jobId} failed: ${failure.code}`);
+    console.error(JSON.stringify(diagnostics.failure(error, jobId ? String(jobId) : null)));
     if (jobId) {
       try {
         await Job.findByIdAndUpdate(jobId, { status: 'failed', error: failure.message });
-      } catch {
-        console.error(`Could not persist failure status for job ${jobId}`);
+      } catch (persistenceError) {
+        diagnostics.enter('job_failure_save');
+        console.error(JSON.stringify(diagnostics.failure(persistenceError, String(jobId))));
       }
     }
     if (failure.status === 504) {
@@ -187,43 +194,65 @@ const cleanAndParseJSON = (rawText) => {
 
 const validateAndNormalizeContent = (content, platforms, isCarousel) => {
   if (!content || typeof content !== 'object' || Array.isArray(content)) {
-    throw new Error('LLM output is not a valid JSON object');
+    throw new GenerationValidationError('LLM output is not a valid JSON object', 'INVALID_OUTPUT_OBJECT');
   }
 
   const nonemptyText = value => typeof value === 'string' && value.trim().length > 0;
   const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
   for (const platform of platforms) {
     if (!Object.hasOwn(content, platform)) {
-      throw new Error(`LLM output missing required "${platform}" object or content`);
+      throw new GenerationValidationError(`LLM output missing required "${platform}" object or content`, 'MISSING_PLATFORM', platform);
     }
   }
 
   if (platforms.includes('twitter')) {
-    if (!Array.isArray(content.twitter) || content.twitter.length === 0
-      || !content.twitter.every(tweet => object(tweet) && nonemptyText(tweet.text)
-        && Array.from(tweet.text).length <= 280)) {
-      throw new Error('LLM output requires non-empty "twitter" posts of at most 280 characters');
+    if (!Array.isArray(content.twitter) || content.twitter.length === 0) {
+      throw new GenerationValidationError('LLM output requires non-empty "twitter" posts of at most 280 characters', 'INVALID_TWITTER_POSTS', 'twitter');
+    }
+    for (const tweet of content.twitter) {
+      if (!object(tweet) || !nonemptyText(tweet.text)) {
+        throw new GenerationValidationError('LLM output requires non-empty "twitter" posts of at most 280 characters', 'MISSING_TWITTER_TEXT', 'twitter');
+      }
+      if (Array.from(tweet.text).length > 280) {
+        throw new GenerationValidationError('LLM output requires non-empty "twitter" posts of at most 280 characters', 'TWITTER_TEXT_TOO_LONG', 'twitter');
+      }
     }
   }
 
-  for (const platform of ['linkedin', 'facebook', 'blog']) {
+  if (platforms.includes('linkedin')) {
+    // Providers sometimes use a single post or Twitter-style text objects.
+    // Recover only explicit text, never stringify objects or guess body fields.
+    const posts = Array.isArray(content.linkedin) ? content.linkedin : [content.linkedin];
+    if (posts.length === 0) {
+      throw new GenerationValidationError('LLM output requires non-empty LinkedIn text posts', 'INVALID_PLATFORM_POSTS', 'linkedin');
+    }
+    content.linkedin = posts.map(post => {
+      if (nonemptyText(post)) return post;
+      if (object(post) && Object.keys(post).length === 1 && Object.hasOwn(post, 'text') && nonemptyText(post.text)) {
+        return post.text;
+      }
+      throw new GenerationValidationError('LLM output requires non-empty LinkedIn text posts', 'INVALID_PLATFORM_POSTS', 'linkedin');
+    });
+  }
+
+  for (const platform of ['facebook', 'blog']) {
     if (platforms.includes(platform) && (!Array.isArray(content[platform])
       || content[platform].length === 0 || !content[platform].every(nonemptyText))) {
-      throw new Error(`LLM output requires a non-empty "${platform}" array of non-empty strings`);
+      throw new GenerationValidationError(`LLM output requires a non-empty "${platform}" array of non-empty strings`, 'INVALID_PLATFORM_POSTS', platform);
     }
   }
 
   if (platforms.includes('email') && (!object(content.email)
     || !nonemptyText(content.email.subject) || !nonemptyText(content.email.body))) {
-    throw new Error('LLM output requires non-empty "email.subject" and "email.body" strings');
+    throw new GenerationValidationError('LLM output requires non-empty "email.subject" and "email.body" strings', 'INVALID_EMAIL', 'email');
   }
 
   if (platforms.includes('instagram')) {
     if (!object(content.instagram)) {
-      throw new Error('LLM output missing required "instagram" object');
+      throw new GenerationValidationError('LLM output missing required "instagram" object', 'INVALID_INSTAGRAM_OBJECT', 'instagram');
     }
     if (typeof content.instagram.caption !== 'string' || content.instagram.caption.trim().length === 0) {
-      throw new Error('LLM output missing non-empty "instagram.caption" string');
+      throw new GenerationValidationError('LLM output missing non-empty "instagram.caption" string', 'MISSING_INSTAGRAM_CAPTION', 'instagram');
     }
 
     if (isCarousel) {
@@ -240,14 +269,14 @@ const validateAndNormalizeContent = (content, platforms, isCarousel) => {
         ];
       } else {
         if (!Array.isArray(content.instagram.slides) || content.instagram.slides.length < 3) {
-          throw new Error('LLM output requires at least three valid Instagram carousel slides');
+          throw new GenerationValidationError('LLM output requires at least three valid Instagram carousel slides', 'INVALID_CAROUSEL_SLIDES', 'instagram');
         }
         content.instagram.slides = content.instagram.slides.slice(0, 7).map((slide, index) => {
           if (nonemptyText(slide)) {
             return { slide_number: index + 1, headline: slide.slice(0, 50), body: slide };
           }
           if (!object(slide) || !nonemptyText(slide.headline) || !nonemptyText(slide.body)) {
-            throw new Error('LLM output requires non-empty carousel slide headlines and bodies');
+            throw new GenerationValidationError('LLM output requires non-empty carousel slide headlines and bodies', 'INVALID_CAROUSEL_SLIDE_TEXT', 'instagram');
           }
           return { slide_number: index + 1, headline: slide.headline, body: slide.body };
         });
@@ -262,7 +291,8 @@ const validateAndNormalizeContent = (content, platforms, isCarousel) => {
   return Object.fromEntries(platforms.map(platform => [platform, content[platform]]));
 };
 
-const callAIAndGenerateContent = async (userPrompt, user, platforms, recommendation = null, recommenderReason = null) => {
+const callAIAndGenerateContent = async (userPrompt, user, platforms, recommendation = null, recommenderReason = null, diagnostics = createGenerationDiagnostics()) => {
+  diagnostics.enter('prompt_preparation');
   const { brandProfile } = user;
   const targetAudienceStr = typeof brandProfile?.targetAudience === 'string'
     ? brandProfile.targetAudience
@@ -322,6 +352,7 @@ ${recommendationSignals}
     ],` : ''}
 
     ${platforms.includes('linkedin') ? `
+    LinkedIn must be a non-empty array of plain text strings, not an object.
     "linkedin": [
       "Write a professional post with short paragraphs and line breaks."
     ],` : ''}
@@ -379,6 +410,7 @@ ${recommendationSignals}
   let data;
 
   try {
+    diagnostics.enter('provider_request');
     const response = await fetch(groqUrl, {
       method: 'POST',
       headers: {
@@ -399,11 +431,14 @@ ${recommendationSignals}
       })
     });
 
+    diagnostics.providerStatus(response.status);
     if (!response.ok) {
+      diagnostics.enter('provider_http');
       // Discard an upstream error body; never persist or log provider diagnostics.
       await response.body?.cancel();
       throw new Error('Content provider request failed');
     }
+    diagnostics.enter('provider_body');
     data = await response.json();
   } catch (error) {
     // Body reads may throw AbortError instead of the deadline's TimeoutError.
@@ -411,15 +446,20 @@ ${recommendationSignals}
     throw groqSignal.aborted ? groqSignal.reason : error;
   }
 
+  diagnostics.completion(data);
   if (!Array.isArray(data?.choices) || !data.choices[0]?.message?.content) {
+    diagnostics.enter('output_empty');
     throw new Error("Groq returned empty response");
   }
   if (data.choices[0].finish_reason === 'length') {
+    diagnostics.enter('output_truncated');
     throw new Error('Groq response exceeded the completion token limit');
   }
 
   const rawText = data.choices[0].message.content;
+  diagnostics.enter('output_parse');
   const parsed = cleanAndParseJSON(rawText);
+  diagnostics.enter('output_validation');
   let generatedContent = validateAndNormalizeContent(parsed, platforms, isCarousel);
 
   // --- CHANGED TO LOREMFLICKR FOR RELIABILITY ---

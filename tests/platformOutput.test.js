@@ -28,13 +28,40 @@ for (const platform of Object.keys(fixtures)) {
   });
 }
 
-for (const platform of ['linkedin', 'facebook', 'blog']) {
+for (const platform of ['facebook', 'blog']) {
   test(`${platform}: rejects empty, wrong-type, blank and mixed-invalid arrays`, () => {
     for (const value of [[], '', 'A post', {}, [' '], [42], [null], ['Valid', {}], ['Valid', '']]) {
       assert.throws(() => validateAndNormalizeContent({ [platform]: value }, [platform], false), /LLM output/);
     }
   });
 }
+
+for (const [label, value, expected] of [
+  ['single string', 'A LinkedIn post.', ['A LinkedIn post.']],
+  ['single text object', { text: 'A LinkedIn post.' }, ['A LinkedIn post.']],
+  ['string array', ['First post.', 'Second post.'], ['First post.', 'Second post.']],
+  ['text objects', [{ text: 'First post.' }, { text: 'Second post.' }], ['First post.', 'Second post.']],
+  ['mixed text entries', ['First post.', { text: 'Second post.' }], ['First post.', 'Second post.']],
+]) {
+  test(`LinkedIn normalizes ${label} without changing its text or public array contract`, () => {
+    const output = validateAndNormalizeContent({ linkedin: clone(value) }, ['linkedin'], false);
+    assert.deepEqual(output, { linkedin: expected });
+  });
+}
+
+test('LinkedIn rejects missing, empty, ambiguous and malformed text without invented content', () => {
+  for (const value of [null, undefined, 42, true, [], '', ' ', {}, [' '], [42], [null], ['Valid', {}],
+    ['Valid', ''], { text: ' ' }, { text: 42 }, { body: 'Not an approved text shape' },
+    { text: 'Title', body: 'Additional content must not be discarded' },
+    { text: { nested: 'Do not stringify' } }, [{ text: 'Valid' }, { text: null }]]) {
+    assert.throws(() => validateAndNormalizeContent({ linkedin: value }, ['linkedin'], false), error => {
+      assert.equal(error.name, 'GenerationValidationError');
+      return true;
+    });
+  }
+  assert.throws(() => validateAndNormalizeContent({}, ['linkedin'], false), /missing required/);
+  assert.throws(() => validateAndNormalizeContent({ linkedin: Object.create({ text: 'Inherited' }) }, ['linkedin'], false));
+});
 
 test('Twitter rejects invented-fallback cases, malformed entries and overlong text', () => {
   for (const value of [[], 'A tweet', {}, [null], ['A tweet'], [{}], [{ text: ' ' }],
@@ -89,6 +116,7 @@ test('offline provider prompt covers all selected platforms with one bounded com
       assert.equal(body.max_completion_tokens, 1536);
       const system = body.messages.find(message => message.role === 'system').content;
       for (const platform of Object.keys(fixtures)) assert.ok(system.includes(`"${platform}":`));
+      assert.ok(system.includes('LinkedIn must be a non-empty array of plain text strings, not an object.'));
       return { ok: true, json: async () => ({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(fixtures) } }] }) };
     };
     const output = await callAIAndGenerateContent('Create a useful skincare post', brand, Object.keys(fixtures));

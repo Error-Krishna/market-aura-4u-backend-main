@@ -22,7 +22,7 @@ test('loopback development defaults preserve unauthenticated access', () => {
 
 test('remote service defaults to identity authentication with an origin audience, not a route', () => {
   assert.deepEqual(remote(), {
-    recommend: `${audience}/recommend`, health: `${audience}/health`, timeoutMs: 15000,
+    recommend: `${audience}/recommend`, health: `${audience}/health`, timeoutMs: 120000,
     authMode: 'cloud-run', audience,
   });
   assert.equal(readConfig({ ...remoteEnv, RECOMMENDER_AUTH_MODE: 'cloud-run', RECOMMENDER_AUDIENCE: audience }).audience, audience);
@@ -186,7 +186,7 @@ for (const phase of ['identity fetch', 'identity body', 'service fetch', 'servic
       controller.abort(new DOMException('Aborted', 'TimeoutError'));
     });
     const recommend = createRecommenderClient(remote(), {
-      timeoutSignal: ms => { assert.equal(ms, 15000); return controller.signal; },
+      timeoutSignal: ms => { assert.equal(ms, 120000); return controller.signal; },
       fetchImpl: async () => {
         calls++;
         if (calls === 1) {
@@ -200,6 +200,71 @@ for (const phase of ['identity fetch', 'identity body', 'service fetch', 'servic
     });
     await assert.rejects(recommend(payload), { name: 'TimeoutError', message: 'Recommender request timed out' });
     assert.equal(calls, phase.startsWith('identity') ? 1 : 2);
+  });
+}
+
+test('Cloud Run timeout defaults accommodate cold starts while explicit overrides remain bounded', () => {
+  assert.equal(remote().timeoutMs, 120000);
+  assert.equal(readConfig({ ...remoteEnv, RECOMMENDER_TIMEOUT_MS: '60000' }).timeoutMs, 60000);
+  assert.equal(readConfig({ ...remoteEnv, RECOMMENDER_TIMEOUT_MS: '90000' }).timeoutMs, 90000);
+  assert.equal(readConfig({ RECOMMENDER_TIMEOUT_MS: '120000' }).timeoutMs, 120000);
+  // The pilot's existing outer deadline leaves time for Groq and persistence.
+  const groqMs = require('../src/config/generation')({}).groqTimeoutMs;
+  assert.ok(remote().timeoutMs + groqMs + 30000 < 240000);
+});
+
+for (const [label, override, coldMs, succeeds] of [
+  ['measured 72-second cold start', undefined, 72000, true],
+  ['old explicit 60-second override', '60000', 72000, false],
+  ['cold start exceeding the bounded deadline', undefined, 121000, false],
+]) {
+  test(`${label}: one authenticated request, shared deadline, no real waiting or retries`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const config = readConfig({ ...remoteEnv, ...(override ? { RECOMMENDER_TIMEOUT_MS: override } : {}) });
+    const controller = new AbortController();
+    const serviceToken = token();
+    let metadataCalls = 0, serviceCalls = 0;
+    let signal;
+    let serviceStarted;
+    const started = new Promise(resolve => { serviceStarted = resolve; });
+    const recommend = createRecommenderClient(config, {
+      timeoutSignal: ms => {
+        assert.equal(ms, config.timeoutMs);
+        setTimeout(() => controller.abort(new DOMException('Deadline reached', 'TimeoutError')), ms);
+        return controller.signal;
+      },
+      fetchImpl: async (url, options) => {
+        assert.equal(options.signal, controller.signal);
+        if (url.startsWith('http://metadata.google.internal/')) {
+          metadataCalls++; signal = options.signal;
+          return new Promise(resolve => setTimeout(() => resolve(identity(serviceToken)), 1000));
+        }
+        assert.equal(url, config.recommend);
+        assert.equal(options.signal, signal);
+        assert.equal(options.headers.Authorization, `Bearer ${serviceToken}`);
+        serviceCalls++;
+        return new Promise((resolve, reject) => {
+          setTimeout(() => resolve(new Response(JSON.stringify({ recommended_topic: 'Offline grounding' }))), coldMs);
+          options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+          serviceStarted();
+        });
+      },
+    });
+    // Attach both outcomes immediately so deadline failures cannot be unhandled.
+    const pending = recommend(payload).then(value => ({ value }), error => ({ error }));
+    t.mock.timers.tick(1000);
+    await started;
+    t.mock.timers.tick(coldMs);
+    const result = await pending;
+    if (succeeds) {
+      assert.equal(result.value.data.recommended_topic, 'Offline grounding');
+      assert.equal(result.error, undefined);
+    } else {
+      assert.equal(result.error.name, 'TimeoutError');
+      assert.equal(result.error.message, 'Recommender request timed out');
+    }
+    assert.equal(metadataCalls, 1);
+    assert.equal(serviceCalls, 1);
   });
 }
 

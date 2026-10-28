@@ -6,7 +6,7 @@
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
     "test:isolated-mvp": "node --test --test-concurrency=1 tests/isolatedMvpJourney.test.js",
-    "test": "node --test --test-concurrency=1 tests/recommenderClient.test.js tests/recommenderGeneration.test.js tests/platformOutput.test.js tests/generateContent.test.js tests/captionQuality.test.js tests/e2eIntegration.test.js tests/payment.test.js tests/routes.test.js tests/mvpBoundary.test.js tests/generationSafety.test.js tests/generationLimiter.test.js tests/generationRoute.test.js tests/cors.test.js tests/corsConfig.test.js tests/authValidation.test.js tests/authLimiter.test.js tests/authProxy.test.js tests/authProxyFallback.test.js tests/authRoutes.test.js tests/onboarding.test.js tests/userResponses.test.js tests/onboardingRoutes.test.js tests/contentHistoryRoutes.test.js tests/generationConfig.test.js tests/readiness.test.js"
+    "test": "node --test --test-concurrency=1 tests/recommenderClient.test.js tests/recommenderGeneration.test.js tests/platformOutput.test.js tests/generateContent.test.js tests/captionQuality.test.js tests/e2eIntegration.test.js tests/payment.test.js tests/routes.test.js tests/mvpBoundary.test.js tests/generationSafety.test.js tests/generationLimiter.test.js tests/generationRoute.test.js tests/cors.test.js tests/corsConfig.test.js tests/authValidation.test.js tests/authLimiter.test.js tests/authProxy.test.js tests/authProxyFallback.test.js tests/authRoutes.test.js tests/onboarding.test.js tests/userResponses.test.js tests/onboardingRoutes.test.js tests/contentHistoryRoutes.test.js tests/generationConfig.test.js tests/generationDiagnostics.test.js tests/readiness.test.js"
   },
   "keywords": [],
   "author": "",
