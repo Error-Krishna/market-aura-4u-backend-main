@@ -35,6 +35,14 @@ Credential values are unchanged. Each generation requests one completion
 (`n: 1`), with no retries. A truncated (`finish_reason: length`) response fails
 instead of being persisted as a successful generation.
 
+For `openai/gpt-oss-20b` (the default model), requests explicitly set
+`reasoning_effort: low`, the lowest supported GPT-OSS effort in
+[Groq's reasoning documentation](https://console.groq.com/docs/reasoning).
+This reduces reasoning overhead within the existing 1536-token default budget;
+reasoning still counts toward that budget and completion is not guaranteed.
+Other configured model names receive no new reasoning parameter. JSON mode,
+output validation, truncation rejection, and the no-retry policy are unchanged.
+
 ## Generated output contract
 
 Every requested platform must contain nonempty content. Twitter is a nonempty
@@ -153,3 +161,12 @@ in this cycle.
 runs offline validation, quota/expiry, concurrency, provider failure, timeout and
 real Express-route tests with mocked persistence and providers. `npm test` also
 runs the existing local Python recommender integration; Groq remains mocked.
+
+The Python integration allows 60 seconds for model startup, with each health
+request/body bounded to one second. It requires HTTP 200, `status: ok` and
+`model_version: v1.0` before running the unchanged real recommendation assertions.
+The child is loopback-only and offline, and spawn/exit failures stop the wait.
+This startup budget is separate from the application's inference deadline: host
+dependency imports have previously taken longer than the old 25-second test
+allowance. `recommenderStartup.test.js` covers readiness, deadline and child-failure
+behavior using local HTTP fixtures without loading models or calling providers.

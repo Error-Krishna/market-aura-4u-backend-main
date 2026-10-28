@@ -406,6 +406,7 @@ ${recommendationSignals}
   `;
 
   const groqUrl = urls.groq.chatCompletions;
+  const groqModel = process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
   const groqSignal = AbortSignal.timeout(generationConfig.groqTimeoutMs);
   let data;
 
@@ -419,7 +420,9 @@ ${recommendationSignals}
       },
       signal: groqSignal,
       body: JSON.stringify({
-        model: process.env.GROQ_MODEL || "openai/gpt-oss-20b",
+        model: groqModel,
+        // Keep more of the bounded completion budget available for content.
+        ...(groqModel === 'openai/gpt-oss-20b' ? { reasoning_effort: 'low' } : {}),
         messages: [
           { role: "system", content: systemPrompt},
           { role: "user", content: userPrompt }

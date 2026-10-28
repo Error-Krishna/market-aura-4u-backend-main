@@ -115,6 +115,7 @@ test('offline provider prompt covers all selected platforms with one bounded com
       assert.equal(body.n, 1);
       assert.equal(body.max_completion_tokens, 1536);
       const system = body.messages.find(message => message.role === 'system').content;
+      assert.equal(system.includes('Match every step promised in the caption'), false);
       for (const platform of Object.keys(fixtures)) assert.ok(system.includes(`"${platform}":`));
       assert.ok(system.includes('LinkedIn must be a non-empty array of plain text strings, not an object.'));
       return { ok: true, json: async () => ({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(fixtures) } }] }) };
@@ -136,6 +137,77 @@ test('a truncated provider response fails even if its partial JSON is parseable,
     await assert.rejects(callAIAndGenerateContent('Create a useful skincare post', brand, ['blog']), /completion token limit/);
     assert.equal(calls, 1);
   } finally { globalThis.fetch = originalFetch; }
+});
+
+for (const model of [undefined, 'openai/gpt-oss-20b', 'other-configured-model']) {
+  test(`reasoning request for ${model ?? 'the default model'} preserves the bounded carousel contract`, async () => {
+    const previousModel = process.env.GROQ_MODEL;
+    const previousFetch = globalThis.fetch;
+    let calls = 0;
+    try {
+      if (model === undefined) delete process.env.GROQ_MODEL;
+      else process.env.GROQ_MODEL = model;
+      globalThis.fetch = async (url, options) => {
+        calls++;
+        assert.equal(url, 'https://api.groq.com/openai/v1/chat/completions');
+        const body = JSON.parse(options.body);
+        assert.equal(body.model, model ?? 'openai/gpt-oss-20b');
+        if (model === 'other-configured-model') assert.equal(Object.hasOwn(body, 'reasoning_effort'), false);
+        else assert.equal(body.reasoning_effort, 'low');
+        assert.equal(body.max_completion_tokens, 1536);
+        assert.equal(body.n, 1);
+        assert.deepEqual(body.response_format, { type: 'json_object' });
+        const system = body.messages.find(message => message.role === 'system').content;
+        assert.ok(system.includes('Match every step promised in the caption to an actionable step in the slides, in the same order, within 3-7 slides.'));
+        assert.ok(system.includes('Count actual steps, not hook or CTA slides; do not promise omitted steps.'));
+        return { ok: true, status: 200, json: async () => ({ choices: [{ finish_reason: 'stop', message: {
+          content: JSON.stringify({ twitter: fixtures.twitter, instagram: {
+            caption: 'Swipe for a simple routine.', slides: [
+              { headline: 'Cleanse', body: 'Use a gentle cleanser.' },
+              { headline: 'Moisturize', body: 'Apply a suitable moisturizer.' },
+              { headline: 'Protect', body: 'Use sunscreen during the day.' },
+            ],
+          } }),
+        } }] }) };
+      };
+      const output = await callAIAndGenerateContent('Create a simple skincare carousel', brand, ['twitter', 'instagram']);
+      assert.equal(output.twitter[0].text, fixtures.twitter[0].text);
+      assert.equal(output.instagram.content_type, 'carousel');
+      assert.equal(output.instagram.slides.length, 3);
+      assert.equal(output.instagram.slides[2].body, 'Use sunscreen during the day.');
+      assert.equal(calls, 1);
+    } finally {
+      globalThis.fetch = previousFetch;
+      if (previousModel === undefined) delete process.env.GROQ_MODEL;
+      else process.env.GROQ_MODEL = previousModel;
+    }
+  });
+}
+
+test('low reasoning still rejects token exhaustion without retrying or increasing the cap', async () => {
+  const previousModel = process.env.GROQ_MODEL;
+  const previousFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    process.env.GROQ_MODEL = 'openai/gpt-oss-20b';
+    globalThis.fetch = async (url, options) => {
+      calls++;
+      assert.equal(url, 'https://api.groq.com/openai/v1/chat/completions');
+      const body = JSON.parse(options.body);
+      assert.equal(body.reasoning_effort, 'low');
+      assert.equal(body.n, 1);
+      assert.equal(body.max_completion_tokens, 1536);
+      return { ok: true, status: 200, json: async () => ({ choices: [{ finish_reason: 'length', message: {
+        content: JSON.stringify(fixtures),
+      } }], usage: { completion_tokens: 1536 } }) };
+    };
+    await assert.rejects(callAIAndGenerateContent('Create a simple skincare carousel', brand, ['twitter', 'instagram']), /completion token limit/);
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousModel === undefined) delete process.env.GROQ_MODEL;
+    else process.env.GROQ_MODEL = previousModel;
+  }
 });
 
 for (const complete of [false, true]) {

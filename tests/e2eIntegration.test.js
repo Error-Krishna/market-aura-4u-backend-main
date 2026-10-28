@@ -43,6 +43,7 @@ const { test, describe, before, after, beforeEach, afterEach } = require('node:t
 const assert = require('node:assert');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
+const { waitForRecommender } = require('./helpers/waitForRecommender');
 const User = require('../src/models/User');
 const Job = require('../src/models/Job');
 const { generateContent } = require('../src/controllers/content/generateContent');
@@ -63,38 +64,20 @@ describe('End-to-End Node.js <-> Python Live Recommendation Integration', () => 
   before(async () => {
     // 1. Spawn live Python recommender daemon
     console.log(`[E2E] Spawning Python daemon on port ${TEST_PORT}...`);
-    pythonProc = spawn(PYTHON_EXECUTABLE, [PYTHON_SERVE_SCRIPT, '--port', String(TEST_PORT)], {
+    pythonProc = spawn(PYTHON_EXECUTABLE, ['-B', '-u', PYTHON_SERVE_SCRIPT, '--host', '127.0.0.1', '--port', String(TEST_PORT)], {
       cwd: PYTHON_CWD,
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1',
+        HF_HUB_DISABLE_TELEMETRY: '1', PYTHONDONTWRITEBYTECODE: '1' },
     });
 
     pythonProc.stdout.on('data', (d) => process.stdout.write(`[Python stdout] ${d}`));
     pythonProc.stderr.on('data', (d) => process.stderr.write(`[Python stderr] ${d}`));
 
-    // 2. Poll health check until ready (cold-boot SentenceTransformers initialization)
-    const start = Date.now();
-    let isReady = false;
-    while (Date.now() - start < 25000) {
-      try {
-        const res = await fetch(`http://127.0.0.1:${TEST_PORT}/health`);
-        if (res.ok) {
-          const body = await res.json();
-          if (body.status === 'ok' || body.status === 'healthy') {
-            isReady = true;
-            console.log(`[E2E] Python daemon is healthy and ready (boot time: ${Date.now() - start}ms)`);
-            break;
-          }
-        }
-      } catch {
-        // Wait for server to bind
-      }
-      await new Promise((r) => setTimeout(r, 250));
-    }
-
-    if (!isReady) {
-      if (pythonProc) pythonProc.kill();
-      throw new Error('[E2E] Python daemon failed to become ready within 25 seconds.');
-    }
+    // Imports alone have measured above 25s on this host; allow 60s for startup
+    // while preserving strict health/model and real recommendation assertions.
+    const bootMs = await waitForRecommender({ child: pythonProc, url: `http://127.0.0.1:${TEST_PORT}/health` });
+    console.log(`[E2E] Python daemon is healthy and ready (boot time: ${bootMs}ms)`);
   });
 
   after(() => {
