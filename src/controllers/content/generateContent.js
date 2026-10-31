@@ -206,6 +206,9 @@ const validateAndNormalizeContent = (content, platforms, isCarousel) => {
   }
 
   if (platforms.includes('twitter')) {
+    if (object(content.twitter) && nonemptyText(content.twitter.text)) {
+      content.twitter = [content.twitter];
+    }
     if (!Array.isArray(content.twitter) || content.twitter.length === 0) {
       throw new GenerationValidationError('LLM output requires non-empty "twitter" posts of at most 280 characters', 'INVALID_TWITTER_POSTS', 'twitter');
     }
@@ -340,10 +343,12 @@ ${recommendationSignals}
 
     --- 3. OUTPUT INSTRUCTIONS (STRICT JSON) ---
     You must return a valid JSON object containing keys only for these platforms: ${platforms.join(', ')}.
+    Every requested platform in this list MUST be included in the output JSON. Do not omit any requested platform.
     Use only hashtags directly relevant to the user brief and brand.
     Follow these specific rules for each platform:
 
     ${platforms.includes('twitter') ? `
+    Twitter must be an array of objects with a "text" string, not a single object.
     "twitter": [
       {
         "text": "Write a punchy tweet (max 280 chars). Use slang if appropriate. Include ONLY 2-3 specific hashtags. Do NOT use generic tags.",
@@ -358,11 +363,13 @@ ${recommendationSignals}
     ],` : ''}
 
     ${platforms.includes('facebook') ? `
+    Facebook must be a non-empty array of plain text strings, not an object.
     "facebook": [
       "Write an engaging Facebook post with a clear hook, useful details, and a call to action."
     ],` : ''}
 
     ${platforms.includes('blog') ? `
+    Blog must be a non-empty array of plain text strings, not an object.
     "blog": [
       "Write a concise blog draft with a title, introductory paragraph, useful sections, and a conclusion."
     ],` : ''}
